@@ -1361,7 +1361,11 @@ void GLToolbar::render_horizontal(const GLCanvas3D& parent)
         const int count = get_visible_items_cnt();
         if (count > 0) {
             const float slot_w = width / float(count);
-            const float glyph = std::min(slot_w, height) * 0.92f;
+            // Slot size is in clip space, where a unit of width is not a unit of
+            // height. Size the glyph in pixels so the icon stays square.
+            const float glyph_px = std::min(get_width() / float(count), get_height()) * 0.92f;
+            const float glyph_x = 2.0f * glyph_px * inv_cnv_w;
+            const float glyph_y = 2.0f * glyph_px * inv_cnv_h;
             int slot = 0;
             for (const GLToolbarItem* item : m_items) {
                 if (!item->is_visible() || item->is_separator())
@@ -1370,9 +1374,9 @@ void GLToolbar::render_horizontal(const GLCanvas3D& parent)
                 const float cell_right = cell_left + slot_w;
                 if (item->is_pressed())
                     render_selection_mark(cell_left, cell_right, bottom, top);
-                const float icon_left = cell_left + 0.5f * (slot_w - glyph);
-                const float icon_top = top - 0.5f * (height - glyph);
-                item->render(parent, tex_id, icon_left, icon_left + glyph, icon_top - glyph, icon_top,
+                const float icon_left = cell_left + 0.5f * (slot_w - glyph_x);
+                const float icon_top = top - 0.5f * (height - glyph_y);
+                item->render(parent, tex_id, icon_left, icon_left + glyph_x, icon_top - glyph_y, icon_top,
                     (unsigned int)tex_width, (unsigned int)tex_height, (unsigned int)(m_layout.icons_size));
                 ++slot;
             }

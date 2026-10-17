@@ -20,7 +20,7 @@ namespace GUI {
 namespace Config {
 
 namespace {
-// Slice it All is 0.9.0. Vendor indexes still name the PrusaSlicer
+// Slice it All is 0.9.1. Vendor indexes still name the PrusaSlicer
 // release the profiles were written for.
 const Semver& profile_app_version()
 {

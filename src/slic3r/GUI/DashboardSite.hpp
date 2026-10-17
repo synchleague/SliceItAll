@@ -27,7 +27,15 @@ public:
     bool running() const;
     unsigned short port() const;
     std::vector<std::string> urls() const;
-    void set_snapshot(std::string json);
+    struct PrinterLink
+    {
+        std::string name;
+        std::string host;
+        // Anycubic LAN printers can start a camera picture from this page.
+        bool camera { false };
+    };
+
+    void set_snapshot(std::string json, std::vector<PrinterLink> printers = {});
 
 private:
     DashboardSite();

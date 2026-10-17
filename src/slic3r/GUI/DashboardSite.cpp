@@ -8,11 +8,25 @@
 #include "GUI_App.hpp"
 #include "I18N.hpp"
 
+#include "FilamentRack.hpp"
+
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PrintConfig.hpp"
+#include "../Utils/Anycubic.hpp"
+
+#ifdef _WIN32
+#include <objidl.h>
+#include <gdiplus.h>
+#ifdef _MSC_VER
+#pragma comment(lib, "gdiplus.lib")
+#endif
+#endif
 
 #include <algorithm>
 #include <condition_variable>
+#include <exception>
 #include <functional>
+#include <map>
 #include <vector>
 #include <cstdio>
 #include <mutex>
@@ -143,7 +157,22 @@ article { background: #1e1e27; border: 1px solid #2c2c38; border-radius: 14px; p
 .module { margin-top: 12px; }
 .module h3 { margin: 0 0 4px; font-size: 13px; color: #FE32AD; font-weight: 650; }
 .module p { margin: 0; white-space: pre-line; }
-.cam { height: 128px; margin-top: 6px; border-radius: 10px; background: #101014; display: flex; align-items: center; justify-content: center; color: #8d8d98; }
+.bays { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.bay-title { font-size: 12px; color: #c9c9d4; margin-bottom: 6px; }
+.dry { color: #9b9ba8; font-size: 12px; margin: 0 0 6px; }
+.spools { display: flex; flex-wrap: wrap; gap: 10px; }
+.spool { width: 68px; text-align: center; }
+.reel { height: 52px; display: flex; align-items: center; justify-content: center; }
+.flange { width: 14px; height: 46px; border-radius: 8px; background: #babac0; }
+.core { width: 30px; height: 32px; border-radius: 4px; margin: 0 -5px; z-index: 1; box-shadow: inset 0 0 0 6px rgba(16, 16, 20, 0.28); }
+.spool-name { font-size: 12px; margin-top: 4px; word-break: break-word; }
+.spool-name.empty { color: #8d8d98; }
+.badge { width: 22px; height: 22px; margin: 4px auto 0; border-radius: 50%; background: #303038; font-size: 11px; line-height: 22px; }
+.cam { position: relative; min-height: 160px; margin-top: 6px; border-radius: 10px; background: #101014; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.cam img { width: 100%; height: auto; max-height: 280px; object-fit: contain; background: #101014; display: block; }
+.cam-note { position: absolute; left: 12px; right: 12px; margin: 0; text-align: center; color: #c9c9d4; font-size: 13px; }
+.cam-play { position: absolute; left: 8px; bottom: 8px; border: 0; border-radius: 999px; padding: 6px 12px; background: #FE32AD; color: white; font: inherit; cursor: pointer; }
+.cam-play:disabled { background: #3a3a44; color: #9b9ba8; cursor: default; }
 </style>
 </head>
 <body>
@@ -161,18 +190,201 @@ function node(tag, className, text) {
   if (text) el.textContent = text;
   return el;
 }
+function findChild(parent, key) {
+  for (const child of parent.children) {
+    if (child.dataset && child.dataset.module === key)
+      return child;
+  }
+  return null;
+}
+function spoolView(slot) {
+  const spool = node("div", "spool");
+  const reel = node("div", "reel");
+  reel.append(node("span", "flange"));
+  const core = node("span", "core");
+  if (slot.color)
+    core.style.background = slot.color;
+  else
+    core.style.background = slot.filled ? "#d6d6da" : "#3a3a42";
+  reel.append(core);
+  reel.append(node("span", "flange"));
+  spool.append(reel);
+  const name = slot.material || (slot.filled ? "" : "/");
+  spool.append(node("div", "spool-name" + (slot.filled ? "" : " empty"), name || "/"));
+  if (slot.badge)
+    spool.append(node("div", "badge", slot.badge));
+  return spool;
+}
+function fillMaterials(block, device) {
+  const info = device && device.materials;
+  if (!info)
+    return;
+  if (info.kind === "resin") {
+    block.append(node("p", "", info.name || "Choose a resin in the material list."));
+    block.append(node("p", "dry", "One resin sits in the vat. This printer has no filament spools."));
+    return;
+  }
+  const bays = node("div", "bays");
+  for (const bay of info.bays || []) {
+    const group = node("div", "bay");
+    if (bay.title)
+      group.append(node("div", "bay-title", bay.title));
+    if (bay.drying)
+      group.append(node("p", "dry", bay.drying));
+    const row = node("div", "spools");
+    for (const slot of bay.slots || [])
+      row.append(spoolView(slot));
+    group.append(row);
+    bays.append(group);
+  }
+  block.append(bays);
+}
+function pullFrame(block) {
+  const img = block.querySelector("img");
+  const note = block.querySelector(".cam-note");
+  if (!img || block.dataset.on !== "1")
+    return;
+  fetch("/api/camera/frame?device=" + encodeURIComponent(block.dataset.camera), { cache: "no-store" })
+    .then(async (response) => {
+      if (block.dataset.on !== "1")
+        return;
+      if (response.status === 200) {
+        const blob = await response.blob();
+        if (!blob.size)
+          return;
+        const url = URL.createObjectURL(blob);
+        const previous = img.dataset.url;
+        img.src = url;
+        img.hidden = false;
+        img.dataset.url = url;
+        if (previous)
+          URL.revokeObjectURL(previous);
+        if (note)
+          note.textContent = "";
+        return;
+      }
+      if (note && response.status !== 204)
+        note.textContent = (await response.text()) || "The camera did not answer.";
+    })
+    .catch(() => {
+      if (note && block.dataset.on === "1")
+        note.textContent = "Waiting for Slice it All.";
+    });
+}
+function stopPlayer(block) {
+  if (block._timer) {
+    clearInterval(block._timer);
+    block._timer = 0;
+  }
+  const img = block.querySelector("img");
+  if (img && img.dataset.url) {
+    URL.revokeObjectURL(img.dataset.url);
+    img.removeAttribute("src");
+    delete img.dataset.url;
+    img.hidden = true;
+  }
+}
+function toggleCamera(block) {
+  const button = block.querySelector("button");
+  const note = block.querySelector(".cam-note");
+  const start = block.dataset.on !== "1";
+  if (button)
+    button.disabled = true;
+  if (note)
+    note.textContent = start ? "Starting the camera." : "Stopping the camera.";
+  fetch("/api/camera?device=" + encodeURIComponent(block.dataset.camera) + "&action=" + (start ? "start" : "stop"), { cache: "no-store" })
+    .then(async (response) => {
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        if (note)
+          note.textContent = (data && data.note) || "The camera did not answer.";
+        if (button)
+          button.disabled = false;
+        return;
+      }
+      block.dataset.on = data.running ? "1" : "0";
+      if (button) {
+        button.textContent = data.running ? "Stop" : "Play";
+        button.disabled = false;
+      }
+      if (data.running) {
+        if (note)
+          note.textContent = "Starting the camera. The first picture can take a few seconds.";
+        if (block._timer)
+          clearInterval(block._timer);
+        pullFrame(block);
+        block._timer = setInterval(() => pullFrame(block), 250);
+      } else {
+        stopPlayer(block);
+        if (note)
+          note.textContent = "Camera is stopped. Press Play to ask this printer for a picture.";
+      }
+    })
+    .catch(() => {
+      if (note)
+        note.textContent = "Waiting for Slice it All.";
+      if (button)
+        button.disabled = false;
+    });
+}
+function fillCamera(block, device) {
+  if (block.dataset.ready === "1")
+    return;
+  block.dataset.ready = "1";
+  block.dataset.camera = (device && device.name) || "";
+  const stage = node("div", "cam");
+  const img = document.createElement("img");
+  img.alt = "";
+  img.hidden = true;
+  const note = node("p", "cam-note", "");
+  const button = node("button", "cam-play", "Play");
+  button.type = "button";
+  const linked = !!(device && device.camera);
+  if (!linked) {
+    button.disabled = true;
+    note.textContent = device && device.host
+      ? "This connection does not provide a camera picture."
+      : "No camera. A network connection is required before a picture can appear.";
+  } else {
+    note.textContent = "Camera is stopped. Press Play to ask this printer for a picture.";
+  }
+  button.addEventListener("click", () => toggleCamera(block));
+  stage.append(img, note, button);
+  block.append(stage);
+}
 function moduleBlock(card, modules, key, device) {
   const info = (modules && modules[key]) || { title: key, body: "" };
-  const block = node("div", "module");
-  block.append(node("h3", "", info.title || key));
-  if (key === "camera") {
-    block.append(node("div", "cam", (device && device.name) || "Camera"));
-  } else {
-    const body = (key === "now_printing" && device && device.job) ? device.job : (info.body || "");
-    if (body)
-      block.append(node("p", "", body));
+  let block = findChild(card, key);
+  if (!block) {
+    block = node("div", "module");
+    block.dataset.module = key;
+    card.append(block);
   }
-  card.append(block);
+  let title = block.querySelector("h3");
+  const heading = (key === "material" && device && device.materials && device.materials.kind === "resin")
+    ? "Resin"
+    : (info.title || key);
+  if (!title) {
+    title = node("h3", "", heading);
+    block.prepend(title);
+  } else {
+    title.textContent = heading;
+  }
+  if (key === "camera") {
+    fillCamera(block, device);
+    return;
+  }
+  for (const child of [...block.children]) {
+    if (child !== title)
+      child.remove();
+  }
+  if (key === "material") {
+    fillMaterials(block, device);
+    return;
+  }
+  const body = (key === "now_printing" && device && device.job) ? device.job : (info.body || "");
+  if (body)
+    block.append(node("p", "", body));
 }
 async function load() {
   const fresh = document.getElementById("fresh");
@@ -186,31 +398,90 @@ async function load() {
     return;
   }
   const board = document.getElementById("board");
-  board.replaceChildren();
   const devices = data.devices || [];
   const tiles = data.tiles || [];
   const byName = new Map(devices.map(device => [device.name, device]));
   if (!tiles.length) {
-    board.append(node("p", "note", "No devices yet. Add printers in the configuration wizard and they show up here."));
+    for (const card of [...board.children]) {
+      if (card._timer)
+        clearInterval(card._timer);
+      for (const block of card.querySelectorAll ? card.querySelectorAll("[data-module]") : [])
+        stopPlayer(block);
+    }
+    board.replaceChildren(node("p", "note", "No devices yet. Add printers in the configuration wizard and they show up here."));
     return;
   }
-  const seen = new Map();
+  const wanted = new Set();
+  const modulesFor = new Map();
   for (const tile of tiles) {
-    const device = byName.get(tile.device) || { name: tile.device, brand: "", status: "Offline", host: "" };
-    let card = seen.get(tile.device);
+    wanted.add(tile.device);
+    if (!modulesFor.has(tile.device))
+      modulesFor.set(tile.device, []);
+    modulesFor.get(tile.device).push(tile.module);
+  }
+  for (const card of [...board.children]) {
+    const name = card.dataset ? card.dataset.device : "";
+    if (!name || !wanted.has(name)) {
+      for (const block of card.querySelectorAll ? card.querySelectorAll("[data-module]") : [])
+        stopPlayer(block);
+      card.remove();
+    }
+  }
+  for (const name of wanted) {
+    const device = byName.get(name) || { name: name, brand: "", status: "Offline", host: "" };
+    let card = null;
+    for (const child of board.children) {
+      if (child.dataset && child.dataset.device === name)
+        card = child;
+    }
     if (!card) {
       card = node("article");
-      card.append(node("h2", "", device.name || "Printer"));
-      const bits = [];
-      if (device.brand) bits.push(device.brand);
-      if (device.host) bits.push(device.host);
-      if (bits.length) card.append(node("div", "meta", bits.join("  ·  ")));
-      const badge = node("div", "status" + (known.includes(device.status) ? " " + device.status : ""), device.status || "Offline");
-      card.append(badge);
-      seen.set(tile.device, card);
+      card.dataset.device = name;
       board.append(card);
     }
-    moduleBlock(card, data.modules, tile.module, device);
+    let heading = card.querySelector("h2");
+    if (!heading) {
+      heading = node("h2", "", device.name || "Printer");
+      card.prepend(heading);
+    } else {
+      heading.textContent = device.name || "Printer";
+    }
+    const bits = [];
+    if (device.brand) bits.push(device.brand);
+    if (device.host) bits.push(device.host);
+    let meta = null;
+    for (const child of card.children) {
+      if (child.classList && child.classList.contains("meta"))
+        meta = child;
+    }
+    if (bits.length) {
+      if (!meta) {
+        meta = node("div", "meta", bits.join("  ·  "));
+        heading.after(meta);
+      } else {
+        meta.textContent = bits.join("  ·  ");
+      }
+    } else if (meta) {
+      meta.remove();
+    }
+    let badge = card.querySelector(".status");
+    const status = device.status || "Offline";
+    if (!badge) {
+      badge = node("div", "status", status);
+      const anchor = meta || heading;
+      anchor.after(badge);
+    }
+    badge.className = "status" + (known.includes(status) ? " " + status : "");
+    badge.textContent = status;
+    const keys = modulesFor.get(name) || [];
+    for (const key of keys)
+      moduleBlock(card, data.modules, key, device);
+    for (const block of [...card.querySelectorAll("[data-module]")]) {
+      if (!keys.includes(block.dataset.module)) {
+        stopPlayer(block);
+        block.remove();
+      }
+    }
   }
 }
 load();
@@ -231,21 +502,249 @@ std::string http_response(const std::string& type, const std::string& body, int 
         "\r\n" + body;
 }
 
-std::string request_path(const std::string& request)
+struct HttpTarget
 {
+    std::string method;
+    std::string path;
+    std::string query;
+};
+
+int hex_value(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+std::string url_decode(const std::string& text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '%' && i + 2 < text.size()) {
+            const int hi = hex_value(text[i + 1]);
+            const int lo = hex_value(text[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(text[i] == '+' ? ' ' : text[i]);
+    }
+    return out;
+}
+
+std::string query_value(const std::string& query, const std::string& key)
+{
+    size_t cursor = 0;
+    while (cursor < query.size()) {
+        const size_t end = query.find('&', cursor);
+        const std::string pair = query.substr(cursor, end == std::string::npos ? std::string::npos : end - cursor);
+        cursor = end == std::string::npos ? query.size() : end + 1;
+        const size_t eq = pair.find('=');
+        const std::string name = url_decode(eq == std::string::npos ? pair : pair.substr(0, eq));
+        if (name != key)
+            continue;
+        return url_decode(eq == std::string::npos ? std::string() : pair.substr(eq + 1));
+    }
+    return {};
+}
+
+HttpTarget request_target(const std::string& request)
+{
+    HttpTarget target;
     const size_t line_end = request.find("\r\n");
     const std::string line = request.substr(0, line_end);
-    if (line.rfind("GET ", 0) != 0)
-        return {};
-    const size_t path_begin = 4;
+    const size_t method_end = line.find(' ');
+    if (method_end == std::string::npos)
+        return target;
+    target.method = line.substr(0, method_end);
+    if (target.method != "GET")
+        return target;
+    const size_t path_begin = method_end + 1;
     const size_t path_end = line.find(' ', path_begin);
     if (path_end == std::string::npos)
-        return {};
+        return target;
     std::string path = line.substr(path_begin, path_end - path_begin);
     const size_t query = path.find('?');
-    if (query != std::string::npos)
+    if (query != std::string::npos) {
+        target.query = path.substr(query + 1);
         path.resize(query);
-    return path;
+    }
+    target.path = std::move(path);
+    return target;
+}
+
+std::string camera_json(bool ok, bool running, const std::string& note)
+{
+    return "{\"ok\":" + std::string(ok ? "true" : "false")
+        + ",\"running\":" + std::string(running ? "true" : "false")
+        + ",\"note\":\"" + json_escape(note) + "\"}";
+}
+
+#ifdef _WIN32
+bool rgb_to_jpeg(const unsigned char* rgb, int width, int height, std::vector<unsigned char>& out)
+{
+    struct Session {
+        ULONG_PTR token { 0 };
+        Session()
+        {
+            Gdiplus::GdiplusStartupInput input;
+            Gdiplus::GdiplusStartup(&token, &input, nullptr);
+        }
+    };
+    static Session session;
+    if (session.token == 0 || width < 1 || height < 1 || rgb == nullptr)
+        return false;
+
+    Gdiplus::Bitmap bitmap(width, height, PixelFormat32bppARGB);
+    Gdiplus::Rect rect(0, 0, width, height);
+    Gdiplus::BitmapData data;
+    if (bitmap.LockBits(&rect, Gdiplus::ImageLockModeWrite, PixelFormat32bppARGB, &data) != Gdiplus::Ok)
+        return false;
+    const int stride = data.Stride;
+    auto* origin = static_cast<unsigned char*>(data.Scan0);
+    for (int y = 0; y < height; ++y) {
+        unsigned char* dst = origin + (stride < 0 ? stride * (height - 1 - y) : stride * y);
+        const unsigned char* src = rgb + static_cast<size_t>(y) * static_cast<size_t>(width) * 3;
+        for (int x = 0; x < width; ++x) {
+            dst[x * 4 + 0] = src[x * 3 + 2];
+            dst[x * 4 + 1] = src[x * 3 + 1];
+            dst[x * 4 + 2] = src[x * 3 + 0];
+            dst[x * 4 + 3] = 255;
+        }
+    }
+    bitmap.UnlockBits(&data);
+
+    UINT count = 0;
+    UINT bytes = 0;
+    if (Gdiplus::GetImageEncodersSize(&count, &bytes) != Gdiplus::Ok || bytes == 0)
+        return false;
+    std::vector<unsigned char> codecs(bytes);
+    auto* info = reinterpret_cast<Gdiplus::ImageCodecInfo*>(codecs.data());
+    if (Gdiplus::GetImageEncoders(count, bytes, info) != Gdiplus::Ok)
+        return false;
+    CLSID clsid {};
+    bool found = false;
+    for (UINT i = 0; i < count; ++i) {
+        if (info[i].MimeType && wcscmp(info[i].MimeType, L"image/jpeg") == 0) {
+            clsid = info[i].Clsid;
+            found = true;
+            break;
+        }
+    }
+    if (!found)
+        return false;
+
+    IStream* stream = nullptr;
+    if (CreateStreamOnHGlobal(nullptr, TRUE, &stream) != S_OK || stream == nullptr)
+        return false;
+    Gdiplus::EncoderParameters params;
+    ULONG quality = 70;
+    params.Count = 1;
+    params.Parameter[0].Guid = Gdiplus::EncoderQuality;
+    params.Parameter[0].Type = Gdiplus::EncoderParameterValueTypeLong;
+    params.Parameter[0].NumberOfValues = 1;
+    params.Parameter[0].Value = &quality;
+    const Gdiplus::Status saved = bitmap.Save(stream, &clsid, &params);
+    bool wrote = false;
+    if (saved == Gdiplus::Ok) {
+        STATSTG stat {};
+        if (stream->Stat(&stat, STATFLAG_NONAME) == S_OK && stat.cbSize.QuadPart > 0) {
+            LARGE_INTEGER zero {};
+            stream->Seek(zero, STREAM_SEEK_SET, nullptr);
+            const ULONG size = static_cast<ULONG>(stat.cbSize.QuadPart);
+            out.resize(size);
+            ULONG read = 0;
+            wrote = stream->Read(out.data(), size, &read) == S_OK && read > 0;
+            if (wrote)
+                out.resize(read);
+        }
+    }
+    stream->Release();
+    return wrote;
+}
+#else
+bool rgb_to_jpeg(const unsigned char*, int, int, std::vector<unsigned char>&)
+{
+    return false;
+}
+#endif
+
+bool slot_filled(const RackSlot& slot)
+{
+    return !slot.color.empty() || !slot.material.empty();
+}
+
+std::string slot_hex(const RackSlot& slot)
+{
+    int red = 0;
+    int green = 0;
+    int blue = 0;
+    if (!rack_color_rgb(slot.color, red, green, blue))
+        return {};
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "#%02x%02x%02x", red, green, blue);
+    return buf;
+}
+
+std::string materials_json(const std::string& printer_name, bool resin)
+{
+    if (resin) {
+        std::string name;
+        if (wxGetApp().preset_bundle) {
+            const Preset& selected = wxGetApp().preset_bundle->sla_materials.get_selected_preset();
+            if (!selected.name.empty() && !selected.is_default)
+                name = selected.name;
+        }
+        return "{\"kind\":\"resin\",\"name\":\"" + json_escape(name) + "\"}";
+    }
+
+    FilamentRack rack = load_filament_rack(printer_name);
+    apply_remembered_ace(printer_name, rack);
+    std::string bays;
+    for (const MaterialBay& bay : rack.bays) {
+        if (bay.key == "ace2") {
+            bool any = false;
+            for (const RackSlot& slot : bay.slots)
+                any = any || slot_filled(slot);
+            if (!any)
+                continue;
+        }
+        std::string drying;
+        if (bay.drying) {
+            drying = "Drying";
+            if (!bay.dry_material.empty())
+                drying += " " + bay.dry_material;
+            if (bay.dry_celsius >= 0)
+                drying += " at " + std::to_string(bay.dry_celsius) + " C";
+        }
+        std::string slots;
+        for (size_t i = 0; i < bay.slots.size(); ++i) {
+            const RackSlot& slot = bay.slots[i];
+            const bool filled = slot_filled(slot);
+            const std::string badge = rack.multi_color_unit
+                ? std::to_string(i + 1)
+                : "E" + std::to_string(i + 1);
+            if (!slots.empty())
+                slots.push_back(',');
+            slots += "{\"material\":\"" + json_escape(slot.material)
+                + "\",\"color\":\"" + json_escape(slot_hex(slot))
+                + "\",\"badge\":\"" + json_escape(badge)
+                + "\",\"filled\":" + (filled ? "true" : "false") + "}";
+        }
+        if (!bays.empty())
+            bays.push_back(',');
+        bays += "{\"title\":\"" + json_escape(bay.title)
+            + "\",\"drying\":\"" + json_escape(drying)
+            + "\",\"slots\":[" + slots + "]}";
+    }
+    return "{\"kind\":\"spools\",\"bays\":[" + bays + "]}";
 }
 
 void set_socket_timeout(boost::asio::ip::tcp::socket& socket)
@@ -265,13 +764,27 @@ void set_socket_timeout(boost::asio::ip::tcp::socket& socket)
 
 } // namespace
 
+struct LiveCamera
+{
+    std::mutex mutex;
+    std::string host;
+    bool running { false };
+    std::string note;
+    std::shared_ptr<AnycubicPreview> preview;
+    int serial { 0 };
+    std::vector<unsigned char> jpeg;
+};
+
 struct DashboardSite::Impl
 {
     std::mutex life;
     std::mutex snapshot_mutex;
     std::mutex clients_mutex;
+    std::mutex cameras_mutex;
     std::condition_variable clients_done;
     std::string json = "{\"devices\":[],\"tiles\":[],\"modules\":{}}";
+    std::map<std::string, DashboardSite::PrinterLink> printers;
+    std::map<std::string, std::shared_ptr<LiveCamera>> cameras;
     boost::asio::io_context io;
     std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor;
     std::thread thread;
@@ -282,6 +795,9 @@ struct DashboardSite::Impl
 
     void arm_accept();
     void serve(boost::asio::ip::tcp::socket& socket);
+    std::string camera_action(const std::string& name, const std::string& action);
+    std::string camera_frame(const std::string& name, std::string& type, int& status, std::string& reason);
+    void stop_cameras();
 };
 
 void DashboardSite::Impl::arm_accept()
@@ -313,6 +829,149 @@ void DashboardSite::Impl::arm_accept()
     });
 }
 
+bool drive_camera(LiveCamera& camera, bool start, std::string& error)
+{
+    DynamicPrintConfig config;
+    config.set_key_value("print_host", new ConfigOptionString(camera.host));
+    Anycubic printer(&config);
+    if (!printer.set_camera_capture(start, error))
+        return false;
+    if (start) {
+        std::string light_error;
+        printer.set_chamber_light(true, light_error);
+        camera.preview = std::make_shared<AnycubicPreview>(camera.host);
+        camera.preview->start();
+        camera.running = true;
+        camera.serial = 0;
+        camera.jpeg.clear();
+        camera.note.clear();
+    } else {
+        camera.preview.reset();
+        camera.running = false;
+        camera.serial = 0;
+        camera.jpeg.clear();
+        std::string light_error;
+        printer.set_chamber_light(false, light_error);
+        camera.note.clear();
+    }
+    return true;
+}
+
+std::string DashboardSite::Impl::camera_action(const std::string& name, const std::string& action)
+{
+    DashboardSite::PrinterLink link;
+    {
+        std::lock_guard<std::mutex> lock(snapshot_mutex);
+        const auto found = printers.find(name);
+        if (found == printers.end())
+            return camera_json(false, false, "This printer is not on the dashboard.");
+        link = found->second;
+    }
+    if (!link.camera || link.host.empty()) {
+        const std::string note = link.host.empty()
+            ? "No camera. A network connection is required before a picture can appear."
+            : "This connection does not provide a camera picture.";
+        return camera_json(false, false, note);
+    }
+
+    std::shared_ptr<LiveCamera> camera;
+    {
+        std::lock_guard<std::mutex> lock(cameras_mutex);
+        auto found = cameras.find(name);
+        if (found == cameras.end()) {
+            camera = std::make_shared<LiveCamera>();
+            cameras.emplace(name, camera);
+        } else {
+            camera = found->second;
+        }
+    }
+
+    const bool start = action != "stop";
+    std::lock_guard<std::mutex> lock(camera->mutex);
+    camera->host = link.host;
+    if (start == camera->running && (start || !camera->preview))
+        return camera_json(true, camera->running, camera->note);
+    std::string error;
+    try {
+        if (!drive_camera(*camera, start, error))
+            return camera_json(false, camera->running, error.empty() ? "The camera did not answer." : error);
+    } catch (const std::exception& ex) {
+        return camera_json(false, camera->running, ex.what());
+    }
+    return camera_json(true, camera->running, camera->note);
+}
+
+std::string DashboardSite::Impl::camera_frame(const std::string& name, std::string& type, int& status, std::string& reason)
+{
+    std::shared_ptr<LiveCamera> camera;
+    {
+        std::lock_guard<std::mutex> lock(cameras_mutex);
+        const auto found = cameras.find(name);
+        if (found != cameras.end())
+            camera = found->second;
+    }
+    if (!camera) {
+        type = "text/plain; charset=utf-8";
+        status = 404;
+        reason = "Not Found";
+        return "Camera is stopped.\n";
+    }
+    std::lock_guard<std::mutex> lock(camera->mutex);
+    if (!camera->running || !camera->preview) {
+        type = "text/plain; charset=utf-8";
+        status = 404;
+        reason = "Not Found";
+        return "Camera is stopped.\n";
+    }
+    AnycubicPicture picture;
+    picture.serial = camera->serial;
+    if (camera->preview->copy_picture(picture)
+        && picture.width > 0
+        && picture.rgb.size() >= static_cast<size_t>(picture.width) * static_cast<size_t>(picture.height) * 3) {
+        std::vector<unsigned char> jpeg;
+        if (rgb_to_jpeg(picture.rgb.data(), picture.width, picture.height, jpeg)) {
+            camera->jpeg.assign(jpeg.begin(), jpeg.end());
+            camera->serial = picture.serial;
+        }
+    }
+    if (!camera->jpeg.empty()) {
+        type = "image/jpeg";
+        status = 200;
+        reason = "OK";
+        return std::string(reinterpret_cast<const char*>(camera->jpeg.data()), camera->jpeg.size());
+    }
+    const std::string error = camera->preview->last_error();
+    if (!error.empty()) {
+        type = "text/plain; charset=utf-8";
+        status = 503;
+        reason = "Service Unavailable";
+        return error;
+    }
+    type = "text/plain; charset=utf-8";
+    status = 204;
+    reason = "No Content";
+    return {};
+}
+
+void DashboardSite::Impl::stop_cameras()
+{
+    std::map<std::string, std::shared_ptr<LiveCamera>> open;
+    {
+        std::lock_guard<std::mutex> lock(cameras_mutex);
+        open.swap(cameras);
+    }
+    for (auto& item : open) {
+        std::lock_guard<std::mutex> lock(item.second->mutex);
+        if (!item.second->running && !item.second->preview)
+            continue;
+        std::string error;
+        try {
+            drive_camera(*item.second, false, error);
+        } catch (const std::exception&) {
+        }
+    }
+}
+
 void DashboardSite::Impl::serve(boost::asio::ip::tcp::socket& socket)
 {
     set_socket_timeout(socket);
@@ -325,19 +984,31 @@ void DashboardSite::Impl::serve(boost::asio::ip::tcp::socket& socket)
             break;
         request.append(buffer, count);
     }
-    const std::string path = request_path(request);
+    const HttpTarget target = request_target(request);
     std::string response;
-    if (path.empty() && !request.empty())
+    if (target.method.empty() && !request.empty())
         response = http_response("text/plain; charset=utf-8", "Method not allowed\n", 405, "Method Not Allowed");
-    else if (path == "/" || path == "/index.html")
+    else if (target.method != "GET" && !target.method.empty())
+        response = http_response("text/plain; charset=utf-8", "Method not allowed\n", 405, "Method Not Allowed");
+    else if (target.path == "/" || target.path == "/index.html")
         response = http_response("text/html; charset=utf-8", page_html(), 200, "OK");
-    else if (path == "/api/dashboard") {
+    else if (target.path == "/api/dashboard") {
         std::string body;
         {
             std::lock_guard<std::mutex> lock(snapshot_mutex);
             body = json;
         }
         response = http_response("application/json; charset=utf-8", body, 200, "OK");
+    } else if (target.path == "/api/camera") {
+        const std::string name = query_value(target.query, "device");
+        const std::string action = query_value(target.query, "action");
+        response = http_response("application/json; charset=utf-8", camera_action(name, action), 200, "OK");
+    } else if (target.path == "/api/camera/frame") {
+        std::string type;
+        int status = 404;
+        std::string reason = "Not Found";
+        const std::string body = camera_frame(query_value(target.query, "device"), type, status, reason);
+        response = http_response(type, body, status, reason.c_str());
     } else
         response = http_response("text/plain; charset=utf-8", "Not found\n", 404, "Not Found");
 
@@ -428,6 +1099,7 @@ void DashboardSite::stop()
 
     std::lock_guard<std::mutex> lock(m_impl->life);
     m_impl->acceptor.reset();
+    m_impl->stop_cameras();
 }
 
 bool DashboardSite::running() const
@@ -455,10 +1127,16 @@ std::vector<std::string> DashboardSite::urls() const
     return urls;
 }
 
-void DashboardSite::set_snapshot(std::string json)
+void DashboardSite::set_snapshot(std::string json, std::vector<PrinterLink> printers)
 {
+    std::map<std::string, PrinterLink> links;
+    for (PrinterLink& printer : printers) {
+        const std::string name = printer.name;
+        links.emplace(name, std::move(printer));
+    }
     std::lock_guard<std::mutex> lock(m_impl->snapshot_mutex);
     m_impl->json = std::move(json);
+    m_impl->printers = std::move(links);
 }
 
 void publish_dashboard_snapshot()
@@ -466,6 +1144,8 @@ void publish_dashboard_snapshot()
     refresh_offline_jobs(false);
     std::string devices_json;
     std::vector<std::string> device_names;
+    std::vector<DashboardSite::PrinterLink> links;
+    const std::vector<DeviceEntry> catalog = bound_devices();
     if (wxGetApp().preset_bundle) {
         for (const PhysicalPrinter& printer : wxGetApp().preset_bundle->physical_printers) {
             std::string brand;
@@ -487,6 +1167,15 @@ void publish_dashboard_snapshot()
             std::string job = offline_dashboard_text(printer.name);
             if (job.empty() && !has_host)
                 job = into_u8(_L("No network connection. Export a file and choose Track it to show the estimate here."));
+            const DeviceEntry* entry = nullptr;
+            for (const DeviceEntry& candidate : catalog) {
+                if (candidate.id == printer.name) {
+                    entry = &candidate;
+                    break;
+                }
+            }
+            const bool resin = entry && entry->resin;
+            const bool camera = entry && entry->link == "Anycubic LAN" && !host.empty();
             if (!devices_json.empty())
                 devices_json.push_back(',');
             devices_json += "{\"name\":\"" + json_escape(printer.name)
@@ -494,8 +1183,15 @@ void publish_dashboard_snapshot()
                 + "\",\"status\":\"" + status
                 + "\",\"host\":\"" + json_escape(host)
                 + "\",\"offline\":" + (has_host ? "false" : "true")
-                + ",\"job\":\"" + json_escape(job) + "\"}";
+                + ",\"camera\":" + (camera ? "true" : "false")
+                + ",\"job\":\"" + json_escape(job)
+                + "\",\"materials\":" + materials_json(printer.name, resin) + "}";
             device_names.push_back(printer.name);
+            DashboardSite::PrinterLink link;
+            link.name = printer.name;
+            link.host = host;
+            link.camera = camera;
+            links.push_back(std::move(link));
         }
     }
 
@@ -554,10 +1250,17 @@ void publish_dashboard_snapshot()
         }
     }
     if (tiles.empty()) {
-        const char* modules[] = { "now_printing", "temperatures", "camera" };
+        const char* modules[] = { "now_printing", "material", "temperatures", "camera" };
         for (const std::string& name : device_names)
             for (const char* module : modules)
                 tiles.emplace_back(name, module);
+    }
+    for (const std::string& name : device_names) {
+        bool has_material = false;
+        for (const auto& tile : tiles)
+            has_material = has_material || (tile.first == name && tile.second == "material");
+        if (!has_material)
+            tiles.emplace_back(name, "material");
     }
 
     std::string tiles_json;
@@ -572,12 +1275,14 @@ void publish_dashboard_snapshot()
     const std::string printing_title = into_u8(_L("Now printing"));
     const std::string temperatures_title = into_u8(_L("Temperatures"));
     const std::string camera_title = into_u8(_L("Camera"));
+    const std::string material_title = into_u8(_L("Material"));
 
     std::string json = "{\"devices\":[" + devices_json + "],\"tiles\":[" + tiles_json + "],\"modules\":{"
         "\"now_printing\":{\"title\":\"" + json_escape(printing_title) + "\",\"body\":\"" + json_escape(now_printing) + "\"},"
+        "\"material\":{\"title\":\"" + json_escape(material_title) + "\",\"body\":\"\"},"
         "\"temperatures\":{\"title\":\"" + json_escape(temperatures_title) + "\",\"body\":\"" + json_escape(temperatures) + "\"},"
         "\"camera\":{\"title\":\"" + json_escape(camera_title) + "\",\"body\":\"\"}}}";
-    DashboardSite::instance().set_snapshot(std::move(json));
+    DashboardSite::instance().set_snapshot(std::move(json), std::move(links));
 }
 
 }}
