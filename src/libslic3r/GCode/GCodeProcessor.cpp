@@ -48,7 +48,7 @@ static const float DEFAULT_FILAMENT_DENSITY = 1.245f;
 static const float DEFAULT_FILAMENT_COST = 0.0f;
 static const Slic3r::Vec3f DEFAULT_EXTRUDER_OFFSET = Slic3r::Vec3f::Zero();
 // taken from PrusaResearch.ini - [printer:Original Prusa i3 MK2.5 MMU2]
-static const std::vector<std::string> DEFAULT_EXTRUDER_COLORS = { "#FF8000", "#DB5182", "#3EC0FF", "#FF4F4F", "#FBEB7D" };
+static const std::vector<std::string> DEFAULT_EXTRUDER_COLORS = { "#8C8C8C", "#DB5182", "#3EC0FF", "#FF4F4F", "#FBEB7D" };
 
 namespace Slic3r {
 
@@ -857,12 +857,12 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     if (extruder_colour != nullptr) {
         // takes colors from config
         m_result.extruder_colors = extruder_colour->values;
-        // try to replace missing values with filament colors
+        // Filament color is what the user picked for that slot. It wins over the printer's default extruder color.
         const ConfigOptionStrings* filament_colour = config.option<ConfigOptionStrings>("filament_colour");
-        if (filament_colour != nullptr && filament_colour->values.size() == m_result.extruder_colors.size()) {
-            for (size_t i = 0; i < m_result.extruder_colors.size(); ++i) {
-                if (m_result.extruder_colors[i].empty())
-                    m_result.extruder_colors[i] = filament_colour->values[i];
+        if (filament_colour != nullptr) {
+            for (size_t i = 0; i < m_result.extruder_colors.size() && i < filament_colour->values.size(); ++i) {
+                if (!filament_colour->values[i].empty())
+                    m_result.extruder_colors[i] = neutral_filament_color(filament_colour->values[i]);
             }
         }
     }
@@ -876,7 +876,7 @@ void GCodeProcessor::apply_config(const DynamicPrintConfig& config)
     // replace missing values with default
     for (size_t i = 0; i < m_result.extruder_colors.size(); ++i) {
         if (m_result.extruder_colors[i].empty())
-            m_result.extruder_colors[i] = "#FF8000";
+            m_result.extruder_colors[i] = "#8C8C8C";
     }
 
     m_extruder_colors.resize(m_result.extruder_colors.size());

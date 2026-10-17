@@ -144,6 +144,15 @@ NotificationManager::PopNotification::PopNotification(const NotificationData &n,
     , m_multiline           (multiline)
 {}
 
+namespace {
+// Text measurement uses the font selected for the current ImGui frame.
+// Startup can push a notification before the 3D canvas has opened one.
+bool imgui_font_ready()
+{
+	return ImGui::GetCurrentContext() != nullptr && ImGui::GetFont() != nullptr;
+}
+}
+
 void NotificationManager::PopNotification::render(GLCanvas3D& canvas, float initial_y, bool move_from_overlay, float overlay_width)
 {
 
@@ -166,6 +175,9 @@ void NotificationManager::PopNotification::render(GLCanvas3D& canvas, float init
 	float         right_gap = SPACE_RIGHT_PANEL + (move_from_overlay ? overlay_width + m_line_height * 5 : 0);
 	bool          fading_pop = false;
 
+	if (!imgui_font_ready())
+		return;
+
 	if (m_line_height != ImGui::CalcTextSize("A").y)
 		init();
 
@@ -182,6 +194,7 @@ void NotificationManager::PopNotification::render(GLCanvas3D& canvas, float init
 			win_pos.x -= preview->get_layers_slider_width();
 		}
 	}
+	win_pos.y -= canvas.get_bed_selector_height();
 
 	ImGuiPureWrap::set_next_window_pos(win_pos.x, win_pos.y, ImGuiCond_Always, 1.0f, 0.0f);
 	ImGuiPureWrap::set_next_window_size(m_window_width, m_window_height, ImGuiCond_Always);
@@ -430,6 +443,9 @@ void NotificationManager::PopNotification::init()
 	// Do not init closing notification
 	if (is_finished())
 		return;
+	// Leave the notification Unknown until a canvas frame has selected a font.
+	if (!imgui_font_ready())
+		return;
 
 	count_spaces();
 	count_lines();
@@ -537,7 +553,7 @@ void NotificationManager::PopNotification::render_hypertext(const float text_x, 
 	ImGui::PopStyleColor(3);
 
 	//hover color
-	ImVec4 orange_color = ImVec4(.99f, .313f, .0f, 1.0f);
+	ImVec4 orange_color = ImVec4(0.996f, 0.196f, 0.678f, 1.0f);
 	if (ImGui::IsItemHovered(ImGuiHoveredFlags_RectOnly))
 		orange_color.y += 0.2f;
 
@@ -941,7 +957,7 @@ void NotificationManager::ProgressBarNotification::render_text(const float win_s
 
 void NotificationManager::ProgressBarNotification::render_bar(const float win_size_x, const float win_size_y, const float win_pos_x, const float win_pos_y)
 {
-	ImVec4 orange_color			= ImVec4(.99f, .313f, .0f, 1.0f);
+	ImVec4 orange_color			= ImVec4(0.996f, 0.196f, 0.678f, 1.0f);
 	ImVec4 gray_color			= ImVec4(.34f, .34f, .34f, 1.0f);
 	ImVec2 lineEnd				= ImVec2(win_pos_x - m_window_width_offset, win_pos_y + win_size_y / 2 + (m_multiline ? m_line_height / 2 : 0));
 	ImVec2 lineStart			= ImVec2(win_pos_x - win_size_x + m_left_indentation, win_pos_y + win_size_y / 2 + (m_multiline ? m_line_height / 2 : 0));

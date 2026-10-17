@@ -216,6 +216,8 @@ public:
 	// if we have to set the same control alignment for different option groups, 
     // we have to set same max contrtol width to all of them
 	void				set_max_win_width(int max_win_width);
+	// Keep value editors inside a narrow sidebar. Toggles keep their own size.
+	void				constrain_field_widths(int width_px);
 	void				set_use_custom_ctrl(bool use_custom_ctrl) { m_use_custom_ctrl = use_custom_ctrl; }
 	const std::map<t_config_option_key, Option>& get_optioms_map() { return m_options; }
 

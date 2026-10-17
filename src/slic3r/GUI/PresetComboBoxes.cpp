@@ -35,6 +35,7 @@
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "Plater.hpp"
+#include "Sidebar.hpp"
 #include "MainFrame.hpp"
 #include "format.hpp"
 #include "Tab.hpp"
@@ -281,6 +282,7 @@ void PresetComboBox::update(std::string select_preset_name)
     std::vector<PresetData> nonsys_presets;
     std::vector<PresetData> incomp_presets;
     std::vector<PresetData> template_presets;
+    std::vector<PresetData> optimized_presets;
 
     const bool allow_templates = !wxGetApp().app_config->get_bool("no_templates");
 
@@ -312,7 +314,20 @@ void PresetComboBox::update(std::string select_preset_name)
         auto bmp = get_bmp(bitmap_key, main_icon_name, "lock_closed", is_enabled, is_compatible, preset.is_system || preset.is_default);
         assert(bmp);
 
-        if (!is_enabled) {
+        const bool optimized = m_type == Preset::TYPE_FILAMENT && extruder_filaments ? extruder_filaments->filament(i).is_optimized
+            : m_type == Preset::TYPE_SLA_MATERIAL && preset.is_optimized;
+        if (optimized) {
+            optimized_presets.push_back({get_preset_name(preset), get_preset_name(preset).Lower(), bmp, is_enabled});
+            if (preset.name == select_preset_name)
+                selected = preset.name;
+            if (preset.is_dirty && m_show_modif_preset_separately) {
+                wxString preset_name = get_preset_name_with_suffix(preset);
+                optimized_presets.push_back({preset_name, preset_name.Lower(), bmp, is_enabled});
+                if (into_u8(preset_name) == select_preset_name)
+                    selected = preset_name;
+            }
+        }
+        else if (!is_enabled) {
             incomp_presets.push_back({get_preset_name(preset), get_preset_name(preset).Lower(), bmp, false});
             if (preset.is_dirty && m_show_modif_preset_separately)
                 incomp_presets.push_back({get_preset_name_with_suffix(preset), get_preset_name_with_suffix(preset).Lower(), bmp, false});
@@ -357,6 +372,20 @@ void PresetComboBox::update(std::string select_preset_name)
             set_label_marker(Append(separator(L("System presets")), NullBitmapBndl()));
     }
     
+    if (!optimized_presets.empty())
+    {
+        std::sort(optimized_presets.begin(), optimized_presets.end(), [](const PresetData& a, const PresetData& b) {
+            return a.lower_name < b.lower_name;
+            });
+
+        set_label_marker(Append(separator(L("Optimized for this printer")), NullBitmapBndl()));
+        for (std::vector<PresetData>::iterator it = optimized_presets.begin(); it != optimized_presets.end(); ++it) {
+            int item_id = Append(it->name, *it->bitmap);
+            if (!it->enabled)
+                set_label_marker(item_id, LABEL_ITEM_DISABLED);
+            validate_selection(it->name == selected);
+        }
+    }
     if (!system_presets.empty())
     {
         std::sort(system_presets.begin(), system_presets.end(), [](const PresetData& a, const PresetData& b) {
@@ -822,47 +851,43 @@ void PlaterPresetComboBox::switch_to_tab()
     if (!tab)
         return;
 
-    if (int page_id = wxGetApp().tab_panel()->FindPage(tab); page_id != wxNOT_FOUND)
-    {
-        //In a case of a multi-material printing, for editing another Filament Preset
-        //it's needed to select this preset for the "Filament settings" Tab
-        if (m_type == Preset::TYPE_FILAMENT && wxGetApp().extruders_edited_cnt() > 1 && 
-            !dynamic_cast<TabFilament*>(wxGetApp().get_tab(m_type))->set_active_extruder(m_extruder_idx))
-            // do nothing, if we can't set new extruder and select new preset
-            return;
+    if (m_type == Preset::TYPE_FILAMENT && wxGetApp().extruders_edited_cnt() > 1 &&
+        !dynamic_cast<TabFilament*>(tab)->set_active_extruder(m_extruder_idx))
+        return;
 
+    if (int page_id = wxGetApp().tab_panel()->FindPage(tab); page_id != wxNOT_FOUND) {
         wxGetApp().tab_panel()->SetSelection(page_id);
-        // Switch to Settings NotePad
         wxGetApp().mainframe->select_tab();
+        return;
     }
+    wxGetApp().sidebar().focus_settings_tab(m_type);
 }
 
 void PlaterPresetComboBox::change_extruder_color()
 {
-    // get current color
-    DynamicPrintConfig* cfg = wxGetApp().get_tab(Preset::TYPE_PRINTER)->get_config();
-    auto colors = static_cast<ConfigOptionStrings*>(cfg->option("extruder_colour")->clone());
-    wxColour clr(colors->values[m_extruder_idx]);
+    if (m_extruder_idx < 0)
+        return;
+    Plater* plater = wxGetApp().plater();
+    if (plater == nullptr)
+        return;
+
+    const std::string current = wxGetApp().sidebar().filament_slot_color(size_t(m_extruder_idx));
+    wxColour clr(wxString::FromUTF8(current));
     if (!clr.IsOk())
-        clr = wxColour(0, 0, 0); // Don't set alfa to transparence
+        clr = wxColour(140, 140, 140);
 
-    auto data = new wxColourData();
-    data->SetChooseFull(1);
-    data->SetColour(clr);
+    wxColourData data;
+    data.SetChooseFull(true);
+    data.SetColour(clr);
 
-    wxColourDialog dialog(this, data);
+    wxColourDialog dialog(this, &data);
     dialog.CenterOnParent();
-    if (dialog.ShowModal() == wxID_OK)
-    {
-        colors->values[m_extruder_idx] = dialog.GetColourData().GetColour().GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+    if (dialog.ShowModal() != wxID_OK)
+        return;
 
-        DynamicPrintConfig cfg_new = *cfg;
-        cfg_new.set_key_value("extruder_colour", colors);
-
-        wxGetApp().get_tab(Preset::TYPE_PRINTER)->load_config(cfg_new);
-        this->update();
-        wxGetApp().plater()->on_config_change(cfg_new);
-    }
+    const std::string hex = dialog.GetColourData().GetColour().GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+    plater->set_filament_slot_color(size_t(m_extruder_idx), hex);
+    wxGetApp().sidebar().update_filament_badges();
 }
 
 void PlaterPresetComboBox::show_add_menu()
@@ -1049,12 +1074,7 @@ void PlaterPresetComboBox::update()
     const ExtruderFilaments& extruder_filaments  = m_preset_bundle->extruders_filaments[m_extruder_idx >= 0 ? m_extruder_idx : 0];
 
     const Preset* selected_filament_preset = nullptr;
-    std::string extruder_color;
     if (m_type == Preset::TYPE_FILAMENT) {
-        extruder_color = m_preset_bundle->printers.get_edited_preset().config.opt_string("extruder_colour", (unsigned int)m_extruder_idx);
-        if (!can_decode_color(extruder_color))
-            // Extruder color is not defined.
-            extruder_color.clear();
         selected_filament_preset = extruder_filaments.get_selected_preset();
         if (selected_filament_preset->is_dirty)
             selected_filament_preset = &m_preset_bundle->filaments.get_edited_preset();
@@ -1077,6 +1097,7 @@ void PlaterPresetComboBox::update()
     std::vector<PresetData> system_presets;
     std::vector<PresetData>  nonsys_presets;
     std::vector<PresetData>  template_presets;
+    std::vector<PresetData>  optimized_presets;
 
     const bool allow_templates = !wxGetApp().app_config->get_bool("no_templates");
 
@@ -1110,18 +1131,8 @@ void PlaterPresetComboBox::update()
                 connect_info_sizer->Show(fill_data_to_connect_info_line(preset, connect_available_info, connect_offline_info, connect_printing_info));
         }
 
-        bool single_bar = false;
-        if (m_type == Preset::TYPE_FILAMENT)
-        {
-            // Assign an extruder color to the selected item if the extruder color is defined.
-            filament_rgb = is_selected ? selected_filament_preset->config.opt_string("filament_colour", 0) : 
-                                         preset.config.opt_string("filament_colour", 0);
-            extruder_rgb = (is_selected && !extruder_color.empty()) ? extruder_color : filament_rgb;
-            single_bar = filament_rgb == extruder_rgb;
-
-            bitmap_key += single_bar ? filament_rgb : filament_rgb + extruder_rgb;
-        }
-        else if (m_type == Preset::TYPE_SLA_MATERIAL) {
+        const bool single_bar = false;
+        if (m_type == Preset::TYPE_SLA_MATERIAL) {
             material_rgb = is_selected ? m_preset_bundle->sla_materials.get_edited_preset().config.opt_string("material_colour") : preset.config.opt_string("material_colour");
             if (material_rgb.empty())
                 material_rgb = print_config_def.get("material_colour")->get_default_value<ConfigOptionString>()->value;
@@ -1132,8 +1143,16 @@ void PlaterPresetComboBox::update()
                                 single_bar, filament_rgb, extruder_rgb, material_rgb);
         assert(bmp);
 
-        const std::string name = preset.alias.empty() ? preset.name : preset.alias;
-        if (preset.is_default || preset.is_system) {
+        const bool optimized = (m_type == Preset::TYPE_FILAMENT && extruder_filaments.filament(i).is_optimized)
+            || (m_type == Preset::TYPE_SLA_MATERIAL && preset.is_optimized);
+        if (optimized) {
+            optimized_presets.push_back({get_preset_name(preset), get_preset_name(preset).Lower(), bmp});
+            if (is_selected) {
+                selected_user_preset = get_preset_name(preset);
+                tooltip = from_u8(preset.name);
+            }
+        }
+        else if (preset.is_default || preset.is_system) {
             if (preset.vendor && preset.vendor->templates_profile) {
                 if (allow_templates) {
                     template_presets.push_back({get_preset_name(preset), get_preset_name(preset).Lower(), bmp});
@@ -1162,6 +1181,19 @@ void PlaterPresetComboBox::update()
             set_label_marker(Append(separator(L("System presets")), NullBitmapBndl()));
     }
     
+    if (!optimized_presets.empty())
+    {
+        std::sort(optimized_presets.begin(), optimized_presets.end(), [](const PresetData& a, const PresetData& b) {
+            return a.lower_name < b.lower_name;
+            });
+
+        set_label_marker(Append(separator(L("Optimized for this printer")), NullBitmapBndl()));
+        for (std::vector<PresetData>::iterator it = optimized_presets.begin(); it != optimized_presets.end(); ++it) {
+            Append(it->name, *it->bitmap);
+            validate_selection(it->name == selected_user_preset);
+        }
+    }
+
     if(!system_presets.empty())
     {
         std::sort(system_presets.begin(), system_presets.end(), [](const PresetData& a, const PresetData& b) {

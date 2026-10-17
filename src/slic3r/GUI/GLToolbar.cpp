@@ -8,6 +8,8 @@
 #include "GLToolbar.hpp"
 
 #include "slic3r/GUI/GLCanvas3D.hpp"
+#include "slic3r/GUI/GLModel.hpp"
+#include "slic3r/GUI/GLShader.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/Camera.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -36,6 +38,7 @@ wxDEFINE_EVENT(EVT_GLTOOLBAR_LAYERSEDITING, SimpleEvent);
 
 wxDEFINE_EVENT(EVT_GLVIEWTOOLBAR_3D, SimpleEvent);
 wxDEFINE_EVENT(EVT_GLVIEWTOOLBAR_PREVIEW, SimpleEvent);
+wxDEFINE_EVENT(EVT_GLVIEWTOOLBAR_ASSEMBLY, SimpleEvent);
 
 const GLToolbarItem::ActionCallback GLToolbarItem::Default_Action_Callback = [](){};
 const GLToolbarItem::VisibilityCallback GLToolbarItem::Default_Visibility_Callback = []()->bool { return true; };
@@ -438,6 +441,11 @@ void GLToolbar::render(const GLCanvas3D& parent)
     if (!m_enabled || m_items.empty())
         return;
 
+    // Screen-space chrome. A gizmo overlay must not leave the depth test on,
+    // or these icons are rejected against the scene and disappear in the editor.
+    glsafe(::glDisable(GL_DEPTH_TEST));
+    glsafe(::glDisable(GL_SCISSOR_TEST));
+
     if (m_icons_texture_dirty)
         generate_icons_texture();
 
@@ -686,6 +694,52 @@ void GLToolbar::update_hover_state_horizontal(const Vec2d& mouse_pos, GLCanvas3D
     const float separator_stride = separator_size + gap_size;
     const float icon_stride = icons_size + 2 * gap_size;
 
+    // The view selector is one bar split into equal buttons. The padding around
+    // each icon belongs to that button.
+    if (m_type == Radio) {
+        const int count = get_visible_items_cnt();
+        if (count > 0) {
+            const float bar_left = m_layout.left;
+            const float bar_top = m_layout.top;
+            const float bar_bottom = bar_top - get_height_horizontal();
+            const float slot_w = get_width_horizontal() / float(count);
+            int slot = 0;
+            for (GLToolbarItem* item : m_items) {
+                if (!item->is_visible() || item->is_separator())
+                    continue;
+                const float left = bar_left + float(slot) * slot_w;
+                const float right = left + slot_w;
+                const bool inside = left <= (float)scaled_mouse_pos.x() && (float)scaled_mouse_pos.x() <= right
+                    && bar_bottom <= (float)scaled_mouse_pos.y() && (float)scaled_mouse_pos.y() <= bar_top;
+                const GLToolbarItem::EState state = item->get_state();
+                switch (state) {
+                case GLToolbarItem::Normal:
+                    if (inside) { item->set_state(GLToolbarItem::Hover); parent.set_as_dirty(); }
+                    break;
+                case GLToolbarItem::Hover:
+                    if (!inside) { item->set_state(GLToolbarItem::Normal); parent.set_as_dirty(); }
+                    break;
+                case GLToolbarItem::Pressed:
+                    if (inside) { item->set_state(GLToolbarItem::HoverPressed); parent.set_as_dirty(); }
+                    break;
+                case GLToolbarItem::HoverPressed:
+                    if (!inside) { item->set_state(GLToolbarItem::Pressed); parent.set_as_dirty(); }
+                    break;
+                case GLToolbarItem::Disabled:
+                    if (inside) { item->set_state(GLToolbarItem::HoverDisabled); parent.set_as_dirty(); }
+                    break;
+                case GLToolbarItem::HoverDisabled:
+                    if (!inside) { item->set_state(GLToolbarItem::Disabled); parent.set_as_dirty(); }
+                    break;
+                default:
+                    break;
+                }
+                ++slot;
+            }
+        }
+        return;
+    }
+
     float left = m_layout.left + border;
     float top  = m_layout.top - border - gap_size;
 
@@ -906,6 +960,31 @@ int GLToolbar::contains_mouse_horizontal(const Vec2d& mouse_pos, const GLCanvas3
     const float gap_size = m_layout.gap_size;
     const float border = m_layout.border;
 
+    if (m_type == Radio) {
+        const int count = get_visible_items_cnt();
+        if (count <= 0)
+            return -1;
+        const float bar_left = m_layout.left;
+        const float bar_top = m_layout.top;
+        const float bar_bottom = bar_top - get_height_horizontal();
+        const float slot_w = get_width_horizontal() / float(count);
+        if ((float)scaled_mouse_pos.y() < bar_bottom || (float)scaled_mouse_pos.y() > bar_top
+            || (float)scaled_mouse_pos.x() < bar_left || (float)scaled_mouse_pos.x() > bar_left + slot_w * float(count))
+            return -1;
+        int slot = 0;
+        for (size_t id = 0; id < m_items.size(); ++id) {
+            const GLToolbarItem* item = m_items[id];
+            if (!item->is_visible() || item->is_separator())
+                continue;
+            const float left = bar_left + float(slot) * slot_w;
+            const float right = left + slot_w;
+            if (left <= (float)scaled_mouse_pos.x() && (float)scaled_mouse_pos.x() <= right)
+                return int(id);
+            ++slot;
+        }
+        return -1;
+    }
+
     float left = m_layout.left + border + gap_size;
     const float top  = m_layout.top - border - gap_size;
 
@@ -1042,6 +1121,55 @@ int GLToolbar::contains_mouse_vertical(const Vec2d& mouse_pos, const GLCanvas3D&
     }
 
     return -1;
+}
+
+void GLToolbar::render_selection_mark(float left, float right, float bottom, float top) const
+{
+    const float width = right - left;
+    const float height = top - bottom;
+    if (width <= 0.f || height <= 0.f)
+        return;
+
+    const float pad_x = width * 0.012f;
+    const float pad_y = height * 0.02f;
+    const float mark_left = left + pad_x;
+    const float mark_right = right - pad_x;
+    const float mark_bottom = bottom + pad_y;
+    const float mark_top = top - pad_y;
+    const float bar = std::max(height * 0.08f, (mark_top - mark_bottom) * 0.1f);
+
+    auto quad = [](float l, float b, float r, float t, const ColorRGBA& color) {
+        GLModel::Geometry geo;
+        geo.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3 };
+        geo.reserve_vertices(4);
+        geo.reserve_indices(6);
+        geo.color = color;
+        geo.add_vertex(Vec3f(l, b, 0.f));
+        geo.add_vertex(Vec3f(r, b, 0.f));
+        geo.add_vertex(Vec3f(r, t, 0.f));
+        geo.add_vertex(Vec3f(l, t, 0.f));
+        geo.add_triangle(0, 1, 2);
+        geo.add_triangle(2, 3, 0);
+        GLModel model;
+        if (geo.is_empty())
+            return;
+        model.init_from(std::move(geo));
+        model.render();
+    };
+
+    GLShaderProgram* shader = wxGetApp().get_shader("flat");
+    if (shader == nullptr)
+        return;
+
+    glsafe(::glDisable(GL_DEPTH_TEST));
+    glsafe(::glEnable(GL_BLEND));
+    glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+    shader->start_using();
+    shader->set_uniform("view_model_matrix", Transform3d::Identity());
+    shader->set_uniform("projection_matrix", Transform3d::Identity());
+    quad(mark_left, mark_bottom, mark_right, mark_top, ColorRGBA(47.f / 255.f, 47.f / 255.f, 56.f / 255.f, 0.95f));
+    quad(mark_left, mark_bottom, mark_right, mark_bottom + bar, ColorRGBA(254.f / 255.f, 50.f / 255.f, 173.f / 255.f, 1.f));
+    shader->stop_using();
 }
 
 void GLToolbar::render_background(float left, float top, float right, float bottom, float border_w, float border_h) const
@@ -1229,6 +1357,29 @@ void GLToolbar::render_horizontal(const GLCanvas3D& parent)
 
     render_background(left, top, right, bottom, border_w, border_h);
 
+    if (m_type == Radio) {
+        const int count = get_visible_items_cnt();
+        if (count > 0) {
+            const float slot_w = width / float(count);
+            const float glyph = std::min(slot_w, height) * 0.92f;
+            int slot = 0;
+            for (const GLToolbarItem* item : m_items) {
+                if (!item->is_visible() || item->is_separator())
+                    continue;
+                const float cell_left = left + float(slot) * slot_w;
+                const float cell_right = cell_left + slot_w;
+                if (item->is_pressed())
+                    render_selection_mark(cell_left, cell_right, bottom, top);
+                const float icon_left = cell_left + 0.5f * (slot_w - glyph);
+                const float icon_top = top - 0.5f * (height - glyph);
+                item->render(parent, tex_id, icon_left, icon_left + glyph, icon_top - glyph, icon_top,
+                    (unsigned int)tex_width, (unsigned int)tex_height, (unsigned int)(m_layout.icons_size));
+                ++slot;
+            }
+        }
+        return;
+    }
+
     const float margin_w = border_w + gap_size_x;
     const float margin_h = border_h + gap_size_y;
 
@@ -1245,12 +1396,16 @@ void GLToolbar::render_horizontal(const GLCanvas3D& parent)
         if (item->is_separator())
             left += separator_stride;
         else {
-            if (item->is_pressed())
-                render_background(left - (id == m_items.size() ? border_w : margin_w),
-                                  top + margin_h, 
-                                  left + icons_size_x + (id == 1 ? border_w : margin_w), 
-                                  top - icons_size_y - margin_h, 
-                                  border_w, border_h);
+            if (item->is_pressed()) {
+                if (m_type == Radio)
+                    render_selection_mark(left, left + icons_size_x, top - icons_size_y, top);
+                else
+                    render_background(left - (id == m_items.size() ? border_w : margin_w),
+                                      top + margin_h,
+                                      left + icons_size_x + (id == 1 ? border_w : margin_w),
+                                      top - icons_size_y - margin_h,
+                                      border_w, border_h);
+            }
 
             item->render(parent, tex_id, left, left + icons_size_x, top - icons_size_y, top, (unsigned int)tex_width, (unsigned int)tex_height, (unsigned int)(m_layout.icons_size));
             left += icon_stride;

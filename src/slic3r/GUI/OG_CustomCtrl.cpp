@@ -10,6 +10,7 @@
 #include "libslic3r/AppConfig.hpp"
 
 #include <wx/utils.h>
+#include <algorithm>
 #include <boost/algorithm/string/split.hpp>
 #include "libslic3r/Utils.hpp"
 #include "I18N.hpp"
@@ -58,6 +59,15 @@ OG_CustomCtrl::OG_CustomCtrl(   wxWindow*            parent,
     this->Bind(wxEVT_MOTION,    &OG_CustomCtrl::OnMotion, this);
     this->Bind(wxEVT_LEFT_DOWN, &OG_CustomCtrl::OnLeftDown, this);
     this->Bind(wxEVT_LEAVE_WINDOW, &OG_CustomCtrl::OnLeaveWin, this);
+    this->Bind(wxEVT_SIZE, [this](wxSizeEvent& event) {
+        event.Skip();
+        const int width = GetClientSize().GetWidth();
+        if (width < 40 || width == m_fitted_width)
+            return;
+        m_fitted_width = width;
+        for (CtrlLine& line : ctrl_lines)
+            line.correct_items_positions();
+    });
 }
 
 void OG_CustomCtrl::init_ctrl_lines()
@@ -406,6 +416,19 @@ void OG_CustomCtrl::correct_window_position(wxWindow* win, const Line& line, Fie
     wxPoint pos = get_pos(line, field);
     int line_height = get_height(line);
     pos.y += std::max(0, int(0.5 * (line_height - win->GetSize().y)));
+    const int limit = GetClientSize().GetWidth() - m_h_gap;
+    const int width = win->GetSize().GetWidth();
+    if (limit > 40 && pos.x + width > limit) {
+        if (dynamic_cast<CheckBox*>(field))
+            pos.x = std::max(0, limit - width);
+        else {
+            if (pos.x > limit - 4 * m_em_unit)
+                pos.x = std::max(0, limit - 4 * m_em_unit);
+            const int fitted = std::max(4 * m_em_unit, limit - pos.x);
+            if (fitted > 0 && fitted != width)
+                win->SetSize(wxSize(fitted, win->GetSize().GetHeight()));
+        }
+    }
     win->SetPosition(pos);
 };
 
@@ -645,7 +668,7 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord v_pos)
     if (ctrl->opt_group->label_width != 0 && !label.IsEmpty()) {
         const wxColour* text_clr = (option_set.size() == 1 && field ? field->label_color() : og_line.label_color());
         is_url_string = !suppress_hyperlinks && !og_line.label_path.empty();
-        h_pos = draw_text(dc, wxPoint(h_pos, v_pos), label + ":", text_clr, ctrl->opt_group->label_width * ctrl->m_em_unit, is_url_string);
+        h_pos = draw_text(dc, wxPoint(h_pos, v_pos), label, text_clr, ctrl->opt_group->label_width * ctrl->m_em_unit, is_url_string);
     }
 
     // If there's a widget, build it and set result to the correct position.
@@ -684,8 +707,6 @@ void OG_CustomCtrl::CtrlLine::render(wxDC& dc, wxCoord v_pos)
             // those two parameter names require localization with context
             label = (option.label == "Top" || option.label == "Bottom") ?
                 _CTX(option.label, "Layers") : _(option.label);
-            label += ":";
-
             if (is_url_string)
                 is_url_string = false;
             else if(opt == option_set.front())

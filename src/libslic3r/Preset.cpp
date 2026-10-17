@@ -387,10 +387,10 @@ bool is_compatible_with_print(const PresetWithVendorProfile &preset, const Prese
             compatible_prints->values.end();
 }
 
-bool is_compatible_with_printer(const PresetWithVendorProfile &preset, const PresetWithVendorProfile &active_printer, const DynamicPrintConfig *extra_config)
+bool is_compatible_with_printer(const PresetWithVendorProfile &preset, const PresetWithVendorProfile &active_printer, const DynamicPrintConfig *extra_config, bool ignore_vendor)
 {
     // templates_profile vendor profiles should be decided as same vendor profiles
-	if (preset.vendor != nullptr && preset.vendor != active_printer.vendor && !preset.vendor->templates_profile)
+	if (!ignore_vendor && preset.vendor != nullptr && preset.vendor != active_printer.vendor && !preset.vendor->templates_profile)
 		// The current profile has a vendor assigned and it is different from the active print's vendor.
 		return false;
     auto &condition               = preset.preset.compatible_printers_condition();
@@ -431,23 +431,21 @@ void Preset::set_visible_from_appconfig(const AppConfig &app_config)
         	return;
         is_visible = app_config.get_variant(vendor->id, model, variant);
     } else if (type == TYPE_FILAMENT || type == TYPE_SLA_MATERIAL) {
-    	const std::string &section_name = (type == TYPE_FILAMENT) ? AppConfig::SECTION_FILAMENTS : AppConfig::SECTION_MATERIALS;
+        const std::string &section_name = (type == TYPE_FILAMENT) ? AppConfig::SECTION_FILAMENTS : AppConfig::SECTION_MATERIALS;
         if (type == TYPE_FILAMENT && app_config.get_bool("no_templates") && vendor && vendor->templates_profile)
             is_visible = false;
-    	else if (app_config.has_section(section_name)) {
-    		// Check whether this profile is marked as "installed" in PrusaSlicer.ini,
-    		// or whether a profile is marked as "installed", which this profile may have been renamed from.
-	    	const std::map<std::string, std::string> &installed = app_config.get_section(section_name);
-	    	auto has = [&installed](const std::string &name) {
-	    		auto it = installed.find(name);
-				return it != installed.end() && ! it->second.empty();
-	    	};
-	    	is_visible = has(this->name);
-	    	for (auto it = this->renamed_from.begin(); ! is_visible && it != this->renamed_from.end(); ++ it)
-	    		is_visible = has(*it);
-	    }
-        else 
-			is_visible = false;
+        else if (app_config.has_section(section_name)) {
+            // Only profiles checked in the configuration wizard stay in the sidebar list.
+            const std::map<std::string, std::string> &installed = app_config.get_section(section_name);
+            auto has = [&installed](const std::string &name) {
+                auto it = installed.find(name);
+                return it != installed.end() && ! it->second.empty();
+            };
+            is_visible = has(this->name);
+            for (auto it = this->renamed_from.begin(); ! is_visible && it != this->renamed_from.end(); ++ it)
+                is_visible = has(*it);
+        } else
+            is_visible = false;
     }
 }
 
@@ -566,6 +564,7 @@ static std::vector<std::string> s_Preset_printer_options {
 static std::vector<std::string> s_Preset_sla_print_options {
     "layer_height",
     "faded_layers",
+    "bottom_layers",
     "supports_enable",
     "support_tree_type",
 
@@ -644,6 +643,30 @@ static std::vector<std::string> s_Preset_sla_material_options{
     "material_density",
     "exposure_time",
     "initial_exposure_time",
+    "exposure_pwm",
+    "initial_exposure_pwm",
+    "sla_initial_primary_lift_distance",
+    "sla_initial_primary_lift_speed",
+    "sla_initial_secondary_lift_distance",
+    "sla_initial_secondary_lift_speed",
+    "sla_initial_primary_retract_distance",
+    "sla_initial_primary_retract_speed",
+    "sla_initial_secondary_retract_distance",
+    "sla_initial_secondary_retract_speed",
+    "sla_initial_wait_before_lift",
+    "sla_initial_wait_after_lift",
+    "sla_initial_wait_after_retract",
+    "sla_primary_lift_distance",
+    "sla_primary_lift_speed",
+    "sla_secondary_lift_distance",
+    "sla_secondary_lift_speed",
+    "sla_primary_retract_distance",
+    "sla_primary_retract_speed",
+    "sla_secondary_retract_distance",
+    "sla_secondary_retract_speed",
+    "sla_wait_before_lift",
+    "sla_wait_after_lift",
+    "sla_wait_after_retract",
     "material_correction",
     "material_correction_x",
     "material_correction_y",
@@ -737,6 +760,7 @@ static std::vector<std::string> s_Preset_sla_printer_options {
     "elefant_foot_compensation",
     "elefant_foot_min_width",
     "gamma_correction",
+    "time_estimate_correction",
     "min_exposure_time", "max_exposure_time",
     "min_initial_exposure_time", "max_initial_exposure_time", "sla_archive_format", "sla_output_precision",
     //FIXME the print host keys are left here just for conversion from the Printer preset to Physical Printer preset.
@@ -1349,6 +1373,25 @@ void PresetCollection::set_default_suppressed(bool default_suppressed)
     }
 }
 
+static bool material_matches_printer_flags(const Preset &material, const Preset &printer)
+{
+    const std::string model = printer.config.opt_string("printer_model");
+    for (const std::string &flag : material.optimized_for)
+        if (flag == model || flag == printer.name)
+            return true;
+    return false;
+}
+
+static bool material_is_optimized(const Preset &material, const PresetWithVendorProfile &active_printer, const DynamicPrintConfig *extra)
+{
+    if (!material.optimized_for.empty())
+        return material_matches_printer_flags(material, active_printer.preset);
+    // General profiles and profiles added in the catalog stay in the shared list.
+    if (!material.is_system || (material.vendor && material.vendor->templates_profile))
+        return false;
+    return is_compatible_with_printer(PresetWithVendorProfile(material, material.vendor), active_printer, extra, true);
+}
+
 size_t PresetCollection::update_compatible_internal(const PresetWithVendorProfile &active_printer, const PresetWithVendorProfile *active_print, PresetSelectCompatibleType unselect_if_incompatible)
 {
     DynamicPrintConfig config;
@@ -1365,16 +1408,26 @@ size_t PresetCollection::update_compatible_internal(const PresetWithVendorProfil
 
         const PresetWithVendorProfile this_preset_with_vendor_profile = this->get_preset_with_vendor_profile(preset_edited);
         bool    was_compatible  = preset_edited.is_compatible;
-        preset_edited.is_compatible = is_compatible_with_printer(this_preset_with_vendor_profile, active_printer, &config);
-        some_compatible |= preset_edited.is_compatible;
-	    if (active_print != nullptr)
-	        preset_edited.is_compatible &= is_compatible_with_print(this_preset_with_vendor_profile, *active_print, active_printer);
-        if (! preset_edited.is_compatible && selected &&
-        	(unselect_if_incompatible == PresetSelectCompatibleType::Always || (unselect_if_incompatible == PresetSelectCompatibleType::OnlyIfWasCompatible && was_compatible)))
-            m_idx_selected = size_t(-1);
-        if (selected)
+        const bool material = m_type == Preset::TYPE_FILAMENT || m_type == Preset::TYPE_SLA_MATERIAL;
+        if (material) {
+            preset_edited.is_optimized = material_is_optimized(preset_selected, active_printer, &config);
+            preset_edited.is_compatible = true;
+            some_compatible = true;
+        } else {
+            preset_edited.is_compatible = is_compatible_with_printer(this_preset_with_vendor_profile, active_printer, &config);
+            some_compatible |= preset_edited.is_compatible;
+	        if (active_print != nullptr)
+	            preset_edited.is_compatible &= is_compatible_with_print(this_preset_with_vendor_profile, *active_print, active_printer);
+            if (! preset_edited.is_compatible && selected &&
+        	    (unselect_if_incompatible == PresetSelectCompatibleType::Always || (unselect_if_incompatible == PresetSelectCompatibleType::OnlyIfWasCompatible && was_compatible)))
+                m_idx_selected = size_t(-1);
+        }
+        if (selected) {
             preset_selected.is_compatible = preset_edited.is_compatible;
-        if (preset_edited.vendor && preset_edited.vendor->templates_profile) {
+            preset_selected.is_optimized = preset_edited.is_optimized;
+        } else
+            preset_selected.is_optimized = preset_edited.is_optimized;
+        if (!material && preset_edited.vendor && preset_edited.vendor->templates_profile) {
             if (preset_selected.is_visible)
                 indices_of_template_presets.push_back(idx_preset);
             else {
@@ -1384,8 +1437,9 @@ size_t PresetCollection::update_compatible_internal(const PresetWithVendorProfil
             }
         }
     }
-    // filter out template profiles where profile with same alias and compability exists
-    if (!indices_of_template_presets.empty()) {
+    // Print profiles still collapse a template when a vendor profile with the same alias fits this printer.
+    // Materials stay in the shared list.
+    if (m_type != Preset::TYPE_FILAMENT && m_type != Preset::TYPE_SLA_MATERIAL && !indices_of_template_presets.empty()) {
         for (size_t idx_preset = m_num_default_presets; idx_preset < m_presets.size(); ++idx_preset) {
             if (m_presets[idx_preset].vendor && !m_presets[idx_preset].vendor->templates_profile && m_presets[idx_preset].is_compatible) {
                 std::string preset_alias = m_presets[idx_preset].alias;
@@ -2195,10 +2249,16 @@ bool PhysicalPrinterCollection::delete_printer(const std::string& name)
     if (it == m_printers.end())
         return false;
 
-    const PhysicalPrinter& printer = *it;
+    const size_t index = size_t(it - m_printers.begin());
     // Erase the preset file.
-    boost::nowide::remove(printer.file.c_str());
+    boost::nowide::remove(it->file.c_str());
     m_printers.erase(it);
+    // The wizard deletes by name. If this was the selected printer, the old
+    // index would still report a selection and the next lookup reads off the end.
+    if (m_idx_selected == index || m_idx_selected >= m_printers.size())
+        unselect_printer();
+    else if (m_idx_selected > index)
+        --m_idx_selected;
     return true;
 }
 
@@ -2416,52 +2476,15 @@ size_t ExtruderFilaments::update_compatible_internal(const PresetWithVendorProfi
     }
     PresetWithVendorProfile active_printer_adjusted(printer_preset_adjusted, active_printer.vendor);
 
-    std::vector<size_t> indices_of_template_presets;
-    indices_of_template_presets.reserve(m_extr_filaments.size());
-
-    size_t num_default_presets = m_filaments->num_default_presets();
+    (void)active_print;
+    (void)unselect_if_incompatible;
+    const size_t num_default_presets = m_filaments->num_default_presets();
     for (size_t idx_preset = num_default_presets; idx_preset < m_extr_filaments.size(); ++idx_preset) {
-        const bool    is_selected   = idx_preset == m_idx_selected;
-        const Preset* preset        = m_extr_filaments[idx_preset].preset;
+        const Preset* preset = m_extr_filaments[idx_preset].preset;
         Filament& extr_filament = m_extr_filaments[idx_preset];
-
-        const PresetWithVendorProfile this_preset_with_vendor_profile = m_filaments->get_preset_with_vendor_profile(*preset);
-        bool    was_compatible = extr_filament.is_compatible;
-        extr_filament.is_compatible = is_compatible_with_printer(this_preset_with_vendor_profile, active_printer_adjusted, &config);
-        if (active_print != nullptr)
-            extr_filament.is_compatible &= is_compatible_with_print(this_preset_with_vendor_profile, *active_print, active_printer_adjusted);
-        if (!extr_filament.is_compatible && is_selected &&
-            (unselect_if_incompatible == PresetSelectCompatibleType::Always || (unselect_if_incompatible == PresetSelectCompatibleType::OnlyIfWasCompatible && was_compatible)))
-            m_idx_selected = size_t(-1);
-        if (preset->vendor && preset->vendor->templates_profile) {
-            if (preset->is_visible)
-                indices_of_template_presets.push_back(idx_preset);
-            else {
-                extr_filament.is_compatible = false;
-                if (is_selected)
-                    m_idx_selected = size_t(-1);
-            }
-        }
-    }
-
-    // filter out template profiles where profile with same alias and compability exists
-    if (!indices_of_template_presets.empty()) {
-        for (size_t idx = num_default_presets; idx < m_extr_filaments.size(); ++idx) {
-            const Filament& filament    = m_extr_filaments[idx];
-            const VendorProfile*    vendor      = filament.preset->vendor;
-            if (vendor && !vendor->templates_profile && filament.is_compatible) {
-                const std::string& preset_alias = filament.preset->alias;
-                for (const auto& template_idx : indices_of_template_presets) {
-                    if (m_extr_filaments[template_idx].preset->alias == preset_alias) {
-                        m_extr_filaments[template_idx].is_compatible = false;
-                        // unselect selected template filament if there is non-template alias compatible
-                        if (template_idx == m_idx_selected && (unselect_if_incompatible != PresetSelectCompatibleType::Never))
-                            m_idx_selected = size_t(-1);
-                        break;
-                    }
-                }
-            }
-        }
+        extr_filament.is_optimized = material_is_optimized(*preset, active_printer_adjusted, &config);
+        extr_filament.is_compatible = true;
+        const_cast<Preset*>(preset)->is_optimized = extr_filament.is_optimized;
     }
 
     return m_idx_selected;

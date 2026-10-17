@@ -65,9 +65,7 @@ RepositoryUpdateUIManager::RepositoryUpdateUIManager(wxWindow* parent, Slic3r::P
         const auto bgr_clr_str = wxGetApp().get_html_bg_color(m_parent->GetParent()->GetParent());
         const auto text_clr_str = encode_color(ColorRGB(text_clr.Red(), text_clr.Green(), text_clr.Blue()));
 
-        wxString message = format_wxstr(_L("As an alternative to online sources, profiles can also be updated by manually loading files containing the updates. "
-           "This is mostly useful on computers that are not connected to the internet. "
-           "Files containing the configuration updates can be downloaded from <a href=%1%>our website</a>."), "https://prusa.io/prusaslicer-profiles");
+        wxString message = _L("To add a vendor that is not in the list above, load that vendor's profile file from this computer.");
 
         const wxFont& font = m_parent->GetFont();
         const int fs = font.GetPointSize();
@@ -90,6 +88,10 @@ RepositoryUpdateUIManager::RepositoryUpdateUIManager(wxWindow* parent, Slic3r::P
 
     fill_entries(true);
     fill_grids();
+    if (m_online_entries.empty()) {
+        online_label->Hide();
+        online_info->Hide();
+    }
 
     m_load_btn = new wxButton(m_parent, wxID_ANY, "  " + _L("Load") + "...  ");
     wxGetApp().UpdateDarkUI(m_load_btn, true);

@@ -39,6 +39,7 @@
 #include "Search.hpp"
 #include "OG_CustomCtrl.hpp"
 
+#include <algorithm>
 #include <tuple>
 #include <wx/app.h>
 #include <wx/button.h>
@@ -367,6 +368,211 @@ void Tab::create_preset_tab()
     m_completed = true;
 }
 
+class SidebarPageBar : public wxPanel
+{
+public:
+    SidebarPageBar(wxWindow* parent, std::function<void(int)> on_select)
+        : wxPanel(parent)
+        , m_on_select(std::move(on_select))
+    {
+        SetBackgroundColour(wxGetApp().get_window_default_clr());
+        SetFont(wxGetApp().small_font());
+        Bind(wxEVT_PAINT, &SidebarPageBar::on_paint, this);
+        Bind(wxEVT_LEFT_UP, &SidebarPageBar::on_click, this);
+        Bind(wxEVT_SIZE, [this](wxSizeEvent& event) {
+            const int before = GetMinSize().y;
+            layout_tabs();
+            if (GetMinSize().y != before && GetParent())
+                GetParent()->Layout();
+            event.Skip();
+        });
+    }
+
+    void set_labels(std::vector<wxString> labels, int active)
+    {
+        m_labels = std::move(labels);
+        m_active = active;
+        layout_tabs();
+        Refresh();
+    }
+
+private:
+    struct Cell { wxRect rect; };
+
+    void layout_tabs()
+    {
+        wxClientDC dc(this);
+        dc.SetFont(GetFont());
+        int width = GetClientSize().GetWidth();
+        if (width < 40) {
+            wxWindow* parent = GetParent();
+            width = parent && parent->GetClientSize().GetWidth() > 40
+                ? parent->GetClientSize().GetWidth()
+                : 28 * std::max(1, wxGetApp().em_unit());
+        }
+        const int pad_x = 10;
+        const int pad_y = 6;
+        m_cells.assign(m_labels.size(), {});
+        int x = 0;
+        int y = 0;
+        int row_h = 0;
+        for (size_t i = 0; i < m_labels.size(); ++i) {
+            const wxSize text = dc.GetTextExtent(m_labels[i]);
+            const int w = text.x + pad_x * 2;
+            const int h = text.y + pad_y * 2 + 3;
+            if (x > 0 && x + w > width) {
+                x = 0;
+                y += row_h;
+                row_h = 0;
+            }
+            m_cells[i].rect = wxRect(x, y, w, h);
+            x += w;
+            row_h = std::max(row_h, h);
+        }
+        const int total = std::max(1, y + row_h);
+        if (GetMinSize().y != total)
+            SetMinSize(wxSize(-1, total));
+    }
+
+    void on_paint(wxPaintEvent&)
+    {
+        if (m_cells.size() != m_labels.size())
+            layout_tabs();
+        wxPaintDC dc(this);
+        const wxSize size = GetClientSize();
+        const wxColour background = GetBackgroundColour();
+        dc.SetBrush(background);
+        dc.SetPen(background);
+        dc.DrawRectangle(0, 0, size.x, size.y);
+        dc.SetFont(GetFont());
+        const wxColour plain = wxGetApp().get_label_clr_default();
+        const wxColour accent(254, 50, 173);
+        for (size_t i = 0; i < m_labels.size(); ++i) {
+            const wxRect& rect = m_cells[i].rect;
+            const bool active = int(i) == m_active;
+            if (active) {
+                dc.SetBrush(wxColour(47, 47, 56));
+                dc.SetPen(*wxTRANSPARENT_PEN);
+                dc.DrawRectangle(rect);
+            }
+            dc.SetTextForeground(active ? *wxWHITE : plain);
+            const wxSize text = dc.GetTextExtent(m_labels[i]);
+            dc.DrawText(m_labels[i], rect.x + (rect.width - text.x) / 2, rect.y + 6);
+            if (active) {
+                dc.SetPen(wxPen(accent, 2));
+                dc.DrawLine(rect.x + 8, rect.GetBottom() - 1, rect.GetRight() - 8, rect.GetBottom() - 1);
+            }
+        }
+    }
+
+    void on_click(wxMouseEvent& event)
+    {
+        for (size_t i = 0; i < m_cells.size(); ++i) {
+            if (m_cells[i].rect.Contains(event.GetPosition())) {
+                m_active = int(i);
+                Refresh();
+                if (m_on_select)
+                    m_on_select(int(i));
+                return;
+            }
+        }
+    }
+
+    std::vector<wxString> m_labels;
+    std::vector<Cell> m_cells;
+    std::function<void(int)> m_on_select;
+    int m_active{ 0 };
+};
+
+void Tab::fit_into_sidebar()
+{
+    if (!m_hsizer || !m_left_sizer || !m_page_view || !GetSizer())
+        return;
+
+    m_in_sidebar = true;
+    if (m_top_hsizer) {
+        GetSizer()->Show(m_top_hsizer, false);
+        m_top_hsizer->ShowItems(false);
+    }
+    if (m_presets_choice)
+        m_presets_choice->SetMinSize(wxSize(-1, m_presets_choice->GetMinSize().GetHeight()));
+
+    m_hsizer->Detach(m_left_sizer);
+    m_hsizer->Detach(m_page_view);
+    GetSizer()->Detach(m_hsizer);
+    delete m_hsizer;
+
+    if (m_treectrl) {
+        m_treectrl->Hide();
+        m_treectrl->SetMinSize(wxSize(0, 0));
+    }
+    if (!m_page_bar)
+        m_page_bar = new SidebarPageBar(this, [this](int index) { select_sidebar_page(index); });
+
+    m_hsizer = new wxBoxSizer(wxVERTICAL);
+    m_hsizer->Add(m_page_bar, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 3);
+    m_hsizer->Add(m_page_view, 1, wxEXPAND | wxLEFT | wxRIGHT, 3);
+    GetSizer()->Add(m_hsizer, 1, wxEXPAND, 0);
+    m_page_view->SetScrollRate(0, std::max(1, m_em_unit));
+    SetMinSize(wxSize(-1, 8 * m_em_unit));
+    SetMaxSize(wxDefaultSize);
+    tighten_sidebar_labels();
+    sync_sidebar_page_bar();
+    Layout();
+}
+
+void Tab::sync_sidebar_page_bar()
+{
+    auto* bar = dynamic_cast<SidebarPageBar*>(m_page_bar);
+    if (!bar)
+        return;
+    std::vector<wxString> labels;
+    int active = 0;
+    int index = 0;
+    for (const PageShp& page : m_pages) {
+        if (!page->get_show())
+            continue;
+        if (m_active_page == page.get())
+            active = index;
+        labels.push_back(translate_category(page->title(), m_type));
+        ++index;
+    }
+    bar->set_labels(std::move(labels), active);
+}
+
+void Tab::select_sidebar_page(int index)
+{
+    if (!m_treectrl)
+        return;
+    wxTreeItemIdValue cookie;
+    wxTreeItemId item = m_treectrl->GetFirstChild(m_treectrl->GetRootItem(), cookie);
+    int n = 0;
+    while (item.IsOk()) {
+        if (n == index) {
+            m_treectrl->SelectItem(item);
+            return;
+        }
+        ++n;
+        item = m_treectrl->GetNextSibling(item);
+    }
+}
+
+void Tab::tighten_sidebar_labels()
+{
+    if (!m_in_sidebar)
+        return;
+    for (PageShp& page : m_pages) {
+        for (ConfigOptionsGroupShp& group : page->m_optgroups) {
+            if (!group)
+                continue;
+            if (group->label_width > 10)
+                group->label_width = 10;
+            if (group->custom_ctrl)
+                group->custom_ctrl->msw_rescale();
+        }
+    }
+}
+
 void Tab::add_scaled_button(wxWindow* parent,
                             ScalableButton** btn,
                             const std::string& icon_name,
@@ -479,8 +685,10 @@ void Tab::OnActivate()
         // From the tab creation whole top sizer is hidden to correct update of preset combobox's size
         // (see https://github.com/prusa3d/PrusaSlicer/issues/10746)
 
-        // On first OnActivate call show top sizer
-        m_top_hsizer->ShowItems(true);
+        // On first OnActivate call show top sizer.
+        // The editor sidebar already has the preset row, so this wide toolbar stays hidden there.
+        if (!m_in_sidebar)
+            m_top_hsizer->ShowItems(true);
         // Size and layouts of all items are correct now,
         // but ALL items of top sizer are visible.
         // So, update visibility of each item according to the ui settings
@@ -941,7 +1149,16 @@ void Tab::msw_rescale()
     m_em_unit = em_unit(m_parent);
 
     m_presets_choice->msw_rescale();
-    m_treectrl->SetMinSize(wxSize(20 * m_em_unit, -1));
+    if (m_in_sidebar) {
+        m_treectrl->SetMinSize(wxSize(0, 0));
+        if (m_presets_choice)
+            m_presets_choice->SetMinSize(wxSize(-1, m_presets_choice->GetMinSize().GetHeight()));
+        if (m_top_hsizer && GetSizer())
+            GetSizer()->Show(m_top_hsizer, false);
+        tighten_sidebar_labels();
+        sync_sidebar_page_bar();
+    } else
+        m_treectrl->SetMinSize(wxSize(20 * m_em_unit, -1));
 
     if (m_compatible_printers.checkbox)
         CheckBox::Rescale(m_compatible_printers.checkbox);
@@ -1092,10 +1309,16 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 
     const bool is_fff = supports_printer_technology(ptFFF);
     ConfigOptionsGroup* og_freq_chng_params = wxGetApp().sidebar().og_freq_chng_params(is_fff);
-    if (opt_key == "fill_density" || opt_key == "pad_enable")
+    if (opt_key == "fill_density" || opt_key == "pad_enable" || opt_key == "layer_height" ||
+        (is_fff && opt_key == "perimeters"))
     {
         boost::any val = og_freq_chng_params->get_config_value(*m_config, opt_key);
         og_freq_chng_params->set_value(opt_key, val);
+    }
+
+    if (m_type == Preset::TYPE_SLA_MATERIAL && (opt_key == "exposure_time" || opt_key == "initial_exposure_time")) {
+        if (ConfigOptionsGroup* og = wxGetApp().sidebar().og_sla_material_params())
+            og->set_value(opt_key, og->get_config_value(*m_config, opt_key));
     }
     
     if (opt_key == "pad_around_object") {
@@ -1124,6 +1347,12 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 
     if (opt_key == "extruders_count")
         wxGetApp().sidebar().set_extruders_count(boost::any_cast<size_t>(value));
+
+    if (m_type == Preset::TYPE_PRINT) {
+        if (!m_postpone_update_ui && m_update_cnt == 0)
+            wxGetApp().sidebar().offer_global_change_to_objects(opt_key);
+        wxGetApp().sidebar().reload_process_settings();
+    }
 
     if (m_postpone_update_ui) {
         // It means that not all values are rolled to the system/last saved values jet.
@@ -1401,6 +1630,10 @@ void Tab::update_frequently_changed_parameters()
     if (! is_fff)
         og_freq_chng_params->set_value("pad", pad_combo_value_for_config(*m_config));
 
+    og_freq_chng_params->set_value("layer_height", og_freq_chng_params->get_config_value(*m_config, "layer_height"));
+    if (is_fff)
+        og_freq_chng_params->set_value("perimeters", og_freq_chng_params->get_config_value(*m_config, "perimeters"));
+
     const std::string updated_value_key = is_fff ? "fill_density" : "pad_enable";
 
     const boost::any val = og_freq_chng_params->get_config_value(*m_config, updated_value_key);
@@ -1411,6 +1644,8 @@ void Tab::update_frequently_changed_parameters()
         og_freq_chng_params->set_value("brim", bool(m_config->opt_float("brim_width") > 0.0));
         update_wiping_button_visibility();
     }
+    if (is_fff)
+        wxGetApp().sidebar().reload_process_settings();
 }
 
 static void validate_custom_parameters(Tab* tab, const t_config_option_key& opt_key, const boost::any& value)
@@ -1421,6 +1656,25 @@ static void validate_custom_parameters(Tab* tab, const t_config_option_key& opt_
     }
     tab->update_dirty();
     tab->on_value_change(opt_key, value);
+}
+
+static void append_generate_supports_button(ConfigOptionsGroup* optgroup)
+{
+    Line line{ "", "" };
+    line.full_width = 1;
+    line.append_widget([](wxWindow* parent) {
+        auto* btn = new wxButton(parent, wxID_ANY, _L("Generate supports"));
+        btn->SetToolTip(_L("Generate supports for the loaded models so you can inspect and move them without slicing the whole print."));
+        wxGetApp().UpdateDarkUI(btn);
+        btn->Bind(wxEVT_BUTTON, [](wxCommandEvent&) {
+            if (Plater* plater = wxGetApp().plater())
+                plater->generate_supports();
+        });
+        auto* sizer = new wxBoxSizer(wxHORIZONTAL);
+        sizer->Add(btn, 0, wxALIGN_CENTER_VERTICAL);
+        return sizer;
+    });
+    optgroup->append_line(line);
 }
 
 void TabPrint::build()
@@ -1551,6 +1805,7 @@ void TabPrint::build()
     page = add_options_page(L("Support material"), "support");
         category_path = "support-material_1698#";
         optgroup = page->new_optgroup(L("Support material"));
+        append_generate_supports_button(optgroup.get());
         optgroup->append_single_option_line("support_material", category_path + "generate-support-material");
         optgroup->append_single_option_line("support_material_auto", category_path + "auto-generated-supports");
         optgroup->append_single_option_line("support_material_threshold", category_path + "overhang-threshold");
@@ -2147,7 +2402,11 @@ void TabFilament::create_extruder_combobox()
 
 void TabFilament::update_extruder_combobox_visibility()
 {
-    const size_t extruder_cnt = static_cast<const ConfigOptionFloats*>(m_preset_bundle->printers.get_edited_preset().config.option("nozzle_diameter"))->values.size();
+    if (m_extruders_cb == nullptr)
+        return;
+    // A resin printer has no nozzle_diameter. Treat that as a single extruder so the chooser stays hidden.
+    const auto* nozzles = static_cast<const ConfigOptionFloats*>(m_preset_bundle->printers.get_edited_preset().config.option("nozzle_diameter"));
+    const size_t extruder_cnt = nozzles == nullptr ? 1 : nozzles->values.size();
     m_extruders_cb->Show(extruder_cnt > 1);
 }
 
@@ -3041,6 +3300,27 @@ void TabPrinter::build_sla()
     line.append_option(optgroup->get_option("fast_tilt_time"));
     line.append_option(optgroup->get_option("slow_tilt_time"));
     line.append_option(optgroup->get_option("high_viscosity_tilt_time"));
+    line.near_label_widget = [this, optgroup_wk = ConfigOptionsGroupWkp(optgroup)](wxWindow* parent) {
+        wxWindow* check_box = CheckBox::GetNewWin(parent);
+        wxGetApp().UpdateDarkUI(check_box);
+        const bool enabled = m_config->option("fast_tilt_time") && !m_config->option("fast_tilt_time")->is_nil();
+        CheckBox::SetValue(check_box, enabled);
+        check_box->Bind(wxEVT_CHECKBOX, [optgroup_wk](wxCommandEvent& evt) {
+            const bool tilt_enabled = evt.IsChecked();
+            if (auto optgroup_sh = optgroup_wk.lock(); optgroup_sh) {
+                for (const char *key : {"fast_tilt_time", "slow_tilt_time", "high_viscosity_tilt_time"}) {
+                    if (Field *field = optgroup_sh->get_fieldc(key, 0); field != nullptr) {
+                        if (tilt_enabled)
+                            field->set_last_meaningful_value();
+                        else
+                            field->set_na_value();
+                    }
+                }
+            }
+        });
+        m_tilt_enabled_cb = check_box;
+        return check_box;
+    };
     optgroup->append_line(line);
 
     optgroup = page->new_optgroup(L("Corrections"));
@@ -3055,6 +3335,7 @@ void TabPrinter::build_sla()
     optgroup->append_single_option_line("elefant_foot_compensation");
     optgroup->append_single_option_line("elefant_foot_min_width");
     optgroup->append_single_option_line("gamma_correction");
+    optgroup->append_single_option_line("time_estimate_correction");
     
     optgroup = page->new_optgroup(L("Exposure"));
     optgroup->append_single_option_line("min_exposure_time");
@@ -3611,6 +3892,7 @@ void TabPrinter::clear_pages()
     m_machine_limits_description_line           = nullptr;
     m_fff_print_host_upload_description_line    = nullptr;
     m_sla_print_host_upload_description_line    = nullptr;
+    m_tilt_enabled_cb                           = nullptr;
 }
 
 void TabPrinter::toggle_options()
@@ -3756,6 +4038,11 @@ void TabPrinter::update_fff()
 
 void TabPrinter::update_sla()
 {
+    if (m_tilt_enabled_cb == nullptr || m_config->option("fast_tilt_time") == nullptr)
+        return;
+    const bool enabled = !m_config->option("fast_tilt_time")->is_nil();
+    if (CheckBox::GetValue(m_tilt_enabled_cb) != enabled)
+        CheckBox::SetValue(m_tilt_enabled_cb, enabled);
 }
 
 void Tab::update_ui_items_related_on_parent_preset(const Preset* selected_preset_parent)
@@ -3809,20 +4096,61 @@ void Tab::load_current_preset()
                 // till unusable Tabs will be deleted
                 Page* tmp_page = m_active_page;
                 m_active_page = nullptr;
-                for (auto tab : wxGetApp().tabs_list) {
-                    if (tab->type() == Preset::TYPE_PRINTER) {
-                        // Printer tab is shown every time
-                        continue;
+                // Visible order is Plater, Printer, then material, then print settings.
+                // Remove pages that do not belong to the new technology before inserting
+                // the ones that do. Inserting and removing in one pass can leave the
+                // top bar and the notebook on different indices, which crashes the switch.
+                wxBookCtrlBase* book = wxGetApp().tab_panel();
+                auto* topbar = dynamic_cast<TopBar*>(book);
+                if (book != nullptr && topbar != nullptr) {
+                    if (wxWindow* current = book->GetCurrentPage()) {
+                        for (Tab* tab : wxGetApp().tabs_list) {
+                            if (tab == current && tab->type() != Preset::TYPE_PRINTER && !tab->supports_printer_technology(printer_technology)) {
+                                if (wxWindow* plater = wxGetApp().plater(); plater != nullptr) {
+                                    const int plater_page = book->FindPage(plater);
+                                    if (plater_page != wxNOT_FOUND)
+                                        book->ChangeSelection(plater_page);
+                                }
+                                break;
+                            }
+                        }
                     }
-                    if (tab->supports_printer_technology(printer_technology))
-                    {
-                        dynamic_cast<TopBar*>(wxGetApp().tab_panel())->InsertNewPage(wxGetApp().tab_panel()->FindPage(this), tab, tab->title(),"");
+
+                    std::vector<int> remove_ids;
+                    for (Tab* tab : wxGetApp().tabs_list) {
+                        if (tab->type() == Preset::TYPE_PRINTER)
+                            continue;
+                        const int page_id = book->FindPage(tab);
+                        if (page_id != wxNOT_FOUND && !tab->supports_printer_technology(printer_technology))
+                            remove_ids.push_back(page_id);
                     }
-                    else {
-                        int page_id = wxGetApp().tab_panel()->FindPage(tab);
-                        wxGetApp().tab_panel()->GetPage(page_id)->Show(false);
-                        wxGetApp().tab_panel()->RemovePage(page_id);
+                    std::sort(remove_ids.begin(), remove_ids.end(), std::greater<int>());
+                    for (int page_id : remove_ids) {
+                        if (page_id < 0 || page_id >= int(book->GetPageCount()))
+                            continue;
+                        if (wxWindow* page = book->GetPage(page_id))
+                            page->Show(false);
+                        book->RemovePage(page_id);
                     }
+
+                    int insert_at = book->FindPage(this);
+                    insert_at = insert_at == wxNOT_FOUND ? int(book->GetPageCount()) : insert_at + 1;
+                    for (Tab* tab : wxGetApp().tabs_list) {
+                        if (tab->type() == Preset::TYPE_PRINTER
+                            || tab->type() == Preset::TYPE_FILAMENT
+                            || tab->type() == Preset::TYPE_SLA_MATERIAL
+                            || tab->type() == Preset::TYPE_PRINT
+                            || tab->type() == Preset::TYPE_SLA_PRINT
+                            || !tab->supports_printer_technology(printer_technology))
+                            continue;
+                        if (book->FindPage(tab) != wxNOT_FOUND)
+                            continue;
+                        if (insert_at > int(book->GetPageCount()))
+                            insert_at = int(book->GetPageCount());
+                        if (topbar->InsertNewPage(size_t(insert_at), tab, tab->title(), ""))
+                            ++insert_at;
+                    }
+                    wxGetApp().sidebar().update_print_settings_tab();
                 }
                 static_cast<TabPrinter*>(this)->m_printer_technology = printer_technology;
                 m_active_page = tmp_page;
@@ -3839,6 +4167,8 @@ void Tab::load_current_preset()
             on_presets_changed();
             if (m_type == Preset::TYPE_SLA_PRINT || m_type == Preset::TYPE_PRINT)
                 update_frequently_changed_parameters();
+            else if (m_type == Preset::TYPE_SLA_MATERIAL)
+                wxGetApp().sidebar().sync_sla_material_params();
         }
 
         m_opt_status_value = (m_presets->get_selected_preset_parent() ? osSystemValue : 0) | osInitValue;
@@ -3881,12 +4211,17 @@ void Tab::rebuild_page_tree()
     if (!item) {
         // this is triggered on first load, so we don't disable the sel change event
         item = m_treectrl->GetFirstVisibleItem();
+        if (!item) {
+            wxTreeItemIdValue cookie;
+            item = m_treectrl->GetFirstChild(rootItem, cookie);
+        }
     }
 
     // allow activate page before selection of a page_tree item
     m_disable_tree_sel_changed_event = false;
     if (item)
         m_treectrl->SelectItem(item);
+    sync_sidebar_page_bar();
 }
 
 void Tab::update_btns_enabling()
@@ -4276,7 +4611,8 @@ bool Tab::tree_sel_change_delayed()
         clear_pages();
         throw_if_canceled();
 
-        if (wxGetApp().mainframe!=nullptr && wxGetApp().mainframe->is_active_and_shown_tab(this))
+        const bool hosted = m_in_sidebar && IsShown();
+        if (wxGetApp().mainframe!=nullptr && (hosted || wxGetApp().mainframe->is_active_and_shown_tab(this)))
             activate_selected_page(throw_if_canceled);
 
         #ifdef __linux__
@@ -4288,6 +4624,7 @@ bool Tab::tree_sel_change_delayed()
 
         m_hsizer->Layout();
         throw_if_canceled();
+        sync_sidebar_page_bar();
         Refresh();
     } catch (const UIBuildCanceled&) {
 	    if (m_active_page)
@@ -5381,6 +5718,15 @@ ConfigOptionsGroupShp Page::new_optgroup(const wxString& title, int noncommon_la
     ConfigOptionsGroupShp optgroup = std::make_shared<ConfigOptionsGroup>(m_parent, title, m_config, true);
     if (noncommon_label_width >= 0)
         optgroup->label_width = noncommon_label_width;
+    if (parent() && parent()->GetParent()) {
+#ifdef __WXOSX__
+        Tab* owner = dynamic_cast<Tab*>(parent()->GetParent()->GetParent());
+#else
+        Tab* owner = dynamic_cast<Tab*>(parent()->GetParent());
+#endif
+        if (owner && owner->hosted_in_sidebar() && optgroup->label_width > 10)
+            optgroup->label_width = 10;
+    }
 
 #ifdef __WXOSX__
     Tab* tab = static_cast<Tab*>(parent()->GetParent()->GetParent());
@@ -5481,6 +5827,37 @@ void TabSLAMaterial::build()
     optgroup = page->new_optgroup(L("Exposure"));
     optgroup->append_single_option_line("exposure_time");
     optgroup->append_single_option_line("initial_exposure_time");
+    optgroup->append_single_option_line("exposure_pwm");
+    optgroup->append_single_option_line("initial_exposure_pwm");
+
+    auto add_paired_motion = [](ConfigOptionsGroupShp group, const wxString &label, const std::string &primary, const std::string &secondary) {
+        Line motion{label, ""};
+        auto first = group->get_option(primary);
+        first.opt.label = L("Primary");
+        motion.append_option(first);
+        auto second = group->get_option(secondary);
+        second.opt.label = L("Secondary");
+        motion.append_option(second);
+        group->append_line(motion);
+    };
+
+    optgroup = page->new_optgroup(L("Initial lift and retract"));
+    add_paired_motion(optgroup, L("Lift distance"), "sla_initial_primary_lift_distance", "sla_initial_secondary_lift_distance");
+    add_paired_motion(optgroup, L("Lift speed"), "sla_initial_primary_lift_speed", "sla_initial_secondary_lift_speed");
+    add_paired_motion(optgroup, L("Retract distance"), "sla_initial_primary_retract_distance", "sla_initial_secondary_retract_distance");
+    add_paired_motion(optgroup, L("Retract speed"), "sla_initial_primary_retract_speed", "sla_initial_secondary_retract_speed");
+    optgroup->append_single_option_line("sla_initial_wait_before_lift");
+    optgroup->append_single_option_line("sla_initial_wait_after_lift");
+    optgroup->append_single_option_line("sla_initial_wait_after_retract");
+
+    optgroup = page->new_optgroup(L("Lift and retract"));
+    add_paired_motion(optgroup, L("Lift distance"), "sla_primary_lift_distance", "sla_secondary_lift_distance");
+    add_paired_motion(optgroup, L("Lift speed"), "sla_primary_lift_speed", "sla_secondary_lift_speed");
+    add_paired_motion(optgroup, L("Retract distance"), "sla_primary_retract_distance", "sla_secondary_retract_distance");
+    add_paired_motion(optgroup, L("Retract speed"), "sla_primary_retract_speed", "sla_secondary_retract_speed");
+    optgroup->append_single_option_line("sla_wait_before_lift");
+    optgroup->append_single_option_line("sla_wait_after_lift");
+    optgroup->append_single_option_line("sla_wait_after_retract");
 
     optgroup = page->new_optgroup(L("Corrections"));
     auto line = Line{ m_config->def()->get("material_correction")->full_label, "" };
@@ -6068,10 +6445,12 @@ void TabSLAPrint::build()
     auto optgroup = page->new_optgroup(L("Layers"));
     optgroup->append_single_option_line("layer_height");
     optgroup->append_single_option_line("faded_layers");
+    optgroup->append_single_option_line("bottom_layers");
 
     page = add_options_page(L("Supports"), "support"/*"sla_supports"*/);
 
     optgroup = page->new_optgroup(L("Supports"));
+    append_generate_supports_button(optgroup.get());
     optgroup->append_single_option_line("supports_enable");
     optgroup->append_single_option_line("support_tree_type");
     optgroup->append_single_option_line("support_enforcers_only");
@@ -6099,13 +6478,6 @@ void TabSLAPrint::build()
     optgroup->append_single_option_line("pad_object_connector_width");
     optgroup->append_single_option_line("pad_object_connector_penetration");
     
-    page = add_options_page(L("Hollowing"), "hollowing");
-    optgroup = page->new_optgroup(L("Hollowing"));
-    optgroup->append_single_option_line("hollowing_enable");
-    optgroup->append_single_option_line("hollowing_min_thickness");
-    optgroup->append_single_option_line("hollowing_quality");
-    optgroup->append_single_option_line("hollowing_closing_distance");
-
     page = add_options_page(L("Advanced"), "wrench");
     optgroup = page->new_optgroup(L("Slicing"));
     optgroup->append_single_option_line("slice_closing_radius");

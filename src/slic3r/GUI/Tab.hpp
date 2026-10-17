@@ -265,6 +265,8 @@ protected:
 	std::map<wxString, std::string>	m_category_icon;	// Map from a category name to an icon file name
 	std::vector<PageShp>			m_pages;
 	Page*				m_active_page {nullptr};
+	bool				m_in_sidebar { false };
+	wxPanel*			m_page_bar { nullptr };
 	bool				m_disable_tree_sel_changed_event {false};
 	bool				m_show_incompatible_presets;
 
@@ -280,6 +282,9 @@ protected:
 	bool				m_postpone_update_ui {false};
 
     void                set_type();
+    void                sync_sidebar_page_bar();
+    void                select_sidebar_page(int index);
+    void                tighten_sidebar_labels();
 
     int                 m_em_unit;
     // To avoid actions with no-completed Tab
@@ -321,6 +326,9 @@ public:
 	virtual bool supports_printer_technology(const PrinterTechnology tech) const = 0;
 
 	void		create_preset_tab();
+    // Stack the category list above the options so the page fits the editor sidebar.
+    void        fit_into_sidebar();
+    bool        hosted_in_sidebar() const { return m_in_sidebar; }
     void        add_scaled_button(wxWindow* parent, ScalableButton** btn, const std::string& icon_name, 
                                   const wxString& label = wxEmptyString, 
                                   long style = wxBU_EXACTFIT | wxNO_BORDER);
@@ -521,6 +529,7 @@ private:
 
 	ogStaticText*	m_fff_print_host_upload_description_line {nullptr};
 	ogStaticText*	m_sla_print_host_upload_description_line {nullptr};
+	wxWindow*		m_tilt_enabled_cb {nullptr};
 
     std::vector<PageShp>			m_pages_fff;
     std::vector<PageShp>			m_pages_sla;

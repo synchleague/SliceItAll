@@ -725,6 +725,10 @@ void NotificationManager::HintNotification::init()
 	// Do not init closing notification
 	if (is_finished())
 		return;
+	// The startup hint is created on the first idle, while Devices is showing
+	// and the 3D canvas has not opened an ImGui frame yet.
+	if (ImGui::GetCurrentContext() == nullptr || ImGui::GetFont() == nullptr)
+		return;
 
 	count_spaces();
 	count_lines();

@@ -52,6 +52,22 @@
 #include <utility>
 #include <vector>
 
+// Generic Prusa profiles ship filament_colour as #FF8000. Show that placeholder as a neutral grey.
+inline std::string neutral_filament_color(std::string color)
+{
+    if (color.empty())
+        return color;
+    if (color.front() != '#')
+        color.insert(color.begin(), '#');
+    std::string folded = color;
+    for (char& c : folded)
+        if (c >= 'A' && c <= 'F')
+            c = char(c - 'A' + 'a');
+    if (folded == "#ff8000")
+        return "#8C8C8C";
+    return color;
+}
+
 #include "libslic3r.h"
 #include "Config.hpp"
 #include "SLA/SupportTreeStrategies.hpp"
@@ -88,8 +104,12 @@ enum class MachineLimitsUsage {
 };
 
 enum PrintHostType {
-   htPrusaLink, htPrusaConnect, htOctoPrint, htMoonraker, htDuet, htFlashAir, htAstroBox, htRepetier, htMKS, htPrusaConnectNew
+   htPrusaLink, htPrusaConnect, htOctoPrint, htMoonraker, htDuet, htFlashAir, htAstroBox, htRepetier, htMKS, htPrusaConnectNew, htAnycubic, htOffline
 };
+
+// A resin printer can be contacted only when it is a Prusa SL1. Other printers can use a network host.
+bool printer_can_connect(PrinterTechnology technology, const std::string& vendor_name);
+PrintHostType default_host_type(PrinterTechnology technology, const std::string& vendor_name);
 
 enum AuthorizationType {
     atKeyPassword, atUserPassword
@@ -1077,6 +1097,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     //Number of the layers needed for the exposure time fade [3;20]
     ((ConfigOptionInt,  faded_layers))/*= 10*/
 
+    // Layers that keep the initial exposure. Used by GOO export.
+    ((ConfigOptionInt,  bottom_layers))
+
     ((ConfigOptionFloat, slice_closing_radius))
     ((ConfigOptionEnum<SlicingMode>, slicing_mode))
 
@@ -1285,6 +1308,30 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,                       material_density))
     ((ConfigOptionFloat,                       exposure_time))
     ((ConfigOptionFloat,                       initial_exposure_time))
+    ((ConfigOptionInt,                         exposure_pwm))
+    ((ConfigOptionInt,                         initial_exposure_pwm))
+    ((ConfigOptionFloat,                       sla_initial_primary_lift_distance))
+    ((ConfigOptionFloat,                       sla_initial_primary_lift_speed))
+    ((ConfigOptionFloat,                       sla_initial_secondary_lift_distance))
+    ((ConfigOptionFloat,                       sla_initial_secondary_lift_speed))
+    ((ConfigOptionFloat,                       sla_initial_primary_retract_distance))
+    ((ConfigOptionFloat,                       sla_initial_primary_retract_speed))
+    ((ConfigOptionFloat,                       sla_initial_secondary_retract_distance))
+    ((ConfigOptionFloat,                       sla_initial_secondary_retract_speed))
+    ((ConfigOptionFloat,                       sla_initial_wait_before_lift))
+    ((ConfigOptionFloat,                       sla_initial_wait_after_lift))
+    ((ConfigOptionFloat,                       sla_initial_wait_after_retract))
+    ((ConfigOptionFloat,                       sla_primary_lift_distance))
+    ((ConfigOptionFloat,                       sla_primary_lift_speed))
+    ((ConfigOptionFloat,                       sla_secondary_lift_distance))
+    ((ConfigOptionFloat,                       sla_secondary_lift_speed))
+    ((ConfigOptionFloat,                       sla_primary_retract_distance))
+    ((ConfigOptionFloat,                       sla_primary_retract_speed))
+    ((ConfigOptionFloat,                       sla_secondary_retract_distance))
+    ((ConfigOptionFloat,                       sla_secondary_retract_speed))
+    ((ConfigOptionFloat,                       sla_wait_before_lift))
+    ((ConfigOptionFloat,                       sla_wait_after_lift))
+    ((ConfigOptionFloat,                       sla_wait_after_retract))
     ((ConfigOptionFloats,                      material_correction))
     ((ConfigOptionFloat,                       material_correction_x))
     ((ConfigOptionFloat,                       material_correction_y))
@@ -1370,9 +1417,10 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,                      elefant_foot_compensation))
     ((ConfigOptionFloat,                      elefant_foot_min_width))
     ((ConfigOptionFloat,                      gamma_correction))
-    ((ConfigOptionFloat,                      fast_tilt_time))
-    ((ConfigOptionFloat,                      slow_tilt_time))
-    ((ConfigOptionFloat,                      high_viscosity_tilt_time))
+    ((ConfigOptionFloat,                      time_estimate_correction))
+    ((ConfigOptionFloatNullable,              fast_tilt_time))
+    ((ConfigOptionFloatNullable,              slow_tilt_time))
+    ((ConfigOptionFloatNullable,              high_viscosity_tilt_time))
     ((ConfigOptionFloat,                      min_exposure_time))
     ((ConfigOptionFloat,                      max_exposure_time))
     ((ConfigOptionFloat,                      min_initial_exposure_time))

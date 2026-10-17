@@ -609,7 +609,7 @@ SendSystemInfoDialog::SendSystemInfoDialog(wxWindow* parent)
     wxString html = GUI::format_wxstr(
             "<html><body bgcolor=%1%><font color=%2%>"
             "<table><tr><td>"
-            "<img src = \"" + resources_dir() + "/icons/PrusaSlicer_192px.png\" />"
+            "<img src = \"" + resources_dir() + "/icons/SliceItAll_192px.png\" />"
             "</td><td align=\"left\">"
             + text0 + "<br / ><br / >"
             + text1 + "<br /><br />"
@@ -745,11 +745,7 @@ bool SendSystemInfoDialog::send_info(wxString& message)
 // The only function callable from outside this unit.
 void show_send_system_info_dialog_if_needed()
 {
-    if (wxGetApp().is_gcode_viewer() || ! should_dialog_be_shown())
-        return;
-
-    SendSystemInfoDialog dlg(wxGetApp().mainframe);
-    dlg.ShowModal();
+    // Slice it All does not collect or send system information.
 }
 
 

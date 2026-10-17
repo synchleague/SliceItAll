@@ -8,6 +8,7 @@
 ///|/
 #include "libslic3r/Technologies.hpp"
 #include "GUI_App.hpp"
+#include "DashboardSite.hpp"
 #include "GUI_Init.hpp" // IWYU pragma: keep
 #include "GUI_ObjectList.hpp"
 #include "GUI_ObjectManipulation.hpp"
@@ -97,7 +98,6 @@
 #include "SavePresetDialog.hpp"
 #include "PrintHostDialogs.hpp" // IWYU pragma: keep
 #include "DesktopIntegrationDialog.hpp"
-#include "SendSystemInfoDialog.hpp"
 #include "Downloader.hpp"
 #include "PhysicalPrinterDialog.hpp"
 #include "WifiConfigDialog.hpp"
@@ -185,7 +185,7 @@ public:
             memDC.SelectObject(bitmap);
 
             memDC.SetFont(m_action_font);
-            memDC.SetTextForeground(wxColour(237, 107, 33));
+            memDC.SetTextForeground(wxColour(254, 50, 173));
             memDC.DrawText(text, int(m_scale * 60), m_action_line_y_position);
 
             memDC.SelectObject(wxNullBitmap);
@@ -202,7 +202,7 @@ public:
         if (!bmp.IsOk())
             return wxNullBitmap;
 
-        // create dark grey background for the splashscreen
+        // Left panel matches the splash artwork: dark, with a little purple.
         // It will be 5/3 of the weight of the bitmap
         int width = lround((double)5 / 3 * bmp.GetWidth());
         int height = bmp.GetHeight();
@@ -210,9 +210,9 @@ public:
         wxImage image(width, height);
         unsigned char* imgdata_ = image.GetData();
         for (int i = 0; i < width * height; ++i) {
-            *imgdata_++ = 51;
-            *imgdata_++ = 51;
-            *imgdata_++ = 51;
+            *imgdata_++ = 18;
+            *imgdata_++ = 16;
+            *imgdata_++ = 32;
         }
 
         wxBitmap new_bmp(image);
@@ -238,14 +238,13 @@ public:
         int logo_size = lround(width * 0.25);
         wxBitmap* logo_bmp_ptr = bmp_cache.load_svg(wxGetApp().logo_name(), logo_size, logo_size);
         if (logo_bmp_ptr == nullptr)
+            logo_bmp_ptr = bmp_cache.load_png(wxGetApp().logo_name(), logo_size, logo_size);
+        if (logo_bmp_ptr == nullptr)
             return;
 
         wxBitmap logo_bmp = *logo_bmp_ptr;
 
         wxCoord margin = int(m_scale * 20);
-
-        wxRect banner_rect(wxPoint(0, logo_size), wxPoint(width, bmp.GetHeight()));
-        banner_rect.Deflate(margin, 2 * margin);
 
         // use a memory DC to draw directly onto the bitmap
         wxMemoryDC memDc(bmp);
@@ -253,28 +252,28 @@ public:
         // draw logo
         memDc.DrawBitmap(logo_bmp, margin, margin, true);
 
-        // draw the (white) labels inside of our black box (at the left of the splashscreen)
+        // Stack the title, version, status line, and credits so none of them share a line.
         memDc.SetTextForeground(wxColour(255, 255, 255));
 
-        memDc.SetFont(m_constant_text.title_font);
-        memDc.DrawLabel(m_constant_text.title,   banner_rect, wxALIGN_TOP | wxALIGN_LEFT);
+        const int text_width = width - 2 * margin;
+        int y = margin + logo_size + int(m_scale * 12);
 
-        int title_height = memDc.GetTextExtent(m_constant_text.title).GetY();
-        banner_rect.SetTop(banner_rect.GetTop() + title_height);
-        banner_rect.SetHeight(banner_rect.GetHeight() - title_height);
+        memDc.SetFont(m_constant_text.title_font);
+        memDc.DrawText(m_constant_text.title, margin, y);
+        y += memDc.GetTextExtent(m_constant_text.title).GetY() + int(m_scale * 8);
 
         memDc.SetFont(m_constant_text.version_font);
-        memDc.DrawLabel(m_constant_text.version, banner_rect, wxALIGN_TOP | wxALIGN_LEFT);
-        int version_height = memDc.GetTextExtent(m_constant_text.version).GetY();
+        memDc.DrawText(m_constant_text.version, margin, y);
+        y += memDc.GetTextExtent(m_constant_text.version).GetY() + int(m_scale * 14);
+
+        m_action_line_y_position = y;
+        memDc.SetFont(m_action_font);
+        y += memDc.GetTextExtent("Ag").GetY() + int(m_scale * 16);
 
         memDc.SetFont(m_constant_text.credits_font);
-        memDc.DrawLabel(m_constant_text.credits, banner_rect, wxALIGN_BOTTOM | wxALIGN_LEFT);
-        int credits_height = memDc.GetMultiLineTextExtent(m_constant_text.credits).GetY();
-        int text_height    = memDc.GetTextExtent("text").GetY();
-
-        // calculate position for the dynamic text
-        int logo_and_header_height = margin + logo_size + title_height + version_height;
-        m_action_line_y_position = logo_and_header_height + 0.5 * (bmp.GetHeight() - margin - credits_height - logo_and_header_height - text_height);
+        const int credits_height = bmp.GetHeight() - margin - y;
+        if (credits_height > 0)
+            memDc.DrawLabel(m_constant_text.credits, wxRect(margin, y, text_width, credits_height), wxALIGN_TOP | wxALIGN_LEFT);
     }
 
 private:
@@ -301,11 +300,10 @@ private:
             // dynamically get the version to display
             version = _L("Version") + " " + std::string(SLIC3R_VERSION);
 
-            // credits infornation
-            credits = "\n" + title + " " +
-                _L("is based on Slic3r by Alessandro Ranellucci and the RepRap community.") + "\n\n" +
-                _L("Developed by Prusa Research.") + "\n\n" +
-                _L("Licensed under GNU AGPLv3.") + "\n\n\n\n\n\n\n";
+            credits = title + " " +
+                _L("is a fork of PrusaSlicer 2.9.6 by Prusa Research.") + "\n\n" +
+                _L("PrusaSlicer is based on Slic3r by Alessandro Ranellucci and the RepRap community.") + "\n\n" +
+                _L("Licensed under GNU AGPLv3.");
 
             title_font = version_font = credits_font = init_font;
         }
@@ -502,7 +500,7 @@ static const FileWildcards file_wildcards_by_type[FT_SIZE] = {
 
     /* FT_TEX */     { "Texture"sv,         { ".png"sv, ".svg"sv } },
 
-    /* FT_SL1 (deprecated, overriden by sla_wildcards) */     { "Masked SLA files"sv, { ".sl1"sv, ".sl1s"sv, ".slx"sv, ".pwmx"sv } },
+    /* FT_SL1 (deprecated, overriden by sla_wildcards) */     { "Masked SLA files"sv, { ".sl1"sv, ".sl1s"sv, ".slx"sv, ".pwmx"sv, ".goo"sv } },
 
     /* FT_ZIP */     { "Zip files"sv, { ".zip"sv } },
 };
@@ -749,9 +747,9 @@ static void generic_exception_handle()
         BOOST_LOG_TRIVIAL(error) << boost::format("std::bad_alloc exception: %1%") % ex.what();
         std::terminate();
     } catch (const boost::io::bad_format_string& ex) {
-        wxString errmsg = _L("PrusaSlicer has encountered a localization error. "
-                             "Please report to PrusaSlicer team, what language was active and in which scenario "
-                             "this issue happened. Thank you.\n\nThe application will now terminate.");
+        wxString errmsg = format_wxstr(_L("%1% has encountered a localization error. "
+                             "Please report which language was active and in which scenario "
+                             "this issue happened. Thank you.\n\nThe application will now terminate."), wxString(SLIC3R_APP_NAME));
         wxMessageBox(errmsg + "\n\n" + wxString(ex.what()), _L("Critical error"), wxOK | wxICON_ERROR);
         BOOST_LOG_TRIVIAL(error) << boost::format("Uncaught exception: %1%") % ex.what();
         std::terminate();
@@ -803,6 +801,8 @@ void GUI_App::post_init()
                 if (boost::algorithm::iends_with(filename, ".3mf"))
                     this->plater()->set_project_filename(from_u8(filename));
             }
+            if (this->mainframe)
+                this->mainframe->select_active_project_tab();
             if (this->init_params->delete_after_load) {
                 for (const std::string& p : this->init_params->input_files) {
                     boost::system::error_code ec;
@@ -847,17 +847,8 @@ void GUI_App::post_init()
     // Neither wxShowEvent nor wxWindowCreateEvent work reliably.
     if (this->get_preset_updater_wrapper()) { // G-Code Viewer does not initialize preset_updater.
         CallAfter([this] {
-            // preset_updater->sync downloads profile updates and than via event checks updates and incompatible presets. We need to run it on startup.
-            // start before cw so it is canceled by cw if needed?
-            this->get_preset_updater_wrapper()->sync_preset_updater(this, preset_bundle);
-            bool cw_showed = this->config_wizard_startup();
-            if (! cw_showed) {
-                // The CallAfter is needed as well, without it, GL extensions did not show.
-                // Also, we only want to show this when the wizard does not, so the new user
-                // sees something else than "we want something" on the first start.
-                show_send_system_info_dialog_if_needed();   
-            }  
-            // app version check is asynchronous and triggers blocking dialog window, better call it last
+            // Profiles ship with the application. The only startup network call is the GitHub release check.
+            this->config_wizard_startup();
             this->app_version_check(false);
         });
     }
@@ -890,6 +881,7 @@ GUI_App::GUI_App(EAppMode mode)
 
 GUI_App::~GUI_App()
 {
+    DashboardSite::instance().stop();
     delete app_config;
     delete preset_bundle;
 }
@@ -1350,11 +1342,11 @@ bool GUI_App::on_init_inner()
     // Win32 32bit build.
     if (wxPlatformInfo::Get().GetArchName().substr(0, 2) == "64") {
         RichMessageDialog dlg(nullptr,
-            _L("You are running a 32 bit build of PrusaSlicer on 64-bit Windows."
-                "\n32 bit build of PrusaSlicer will likely not be able to utilize all the RAM available in the system."
-                "\nPlease download and install a 64 bit build of PrusaSlicer from https://www.prusa3d.cz/prusaslicer/."
-                "\nDo you wish to continue?"),
-            "PrusaSlicer", wxICON_QUESTION | wxYES_NO);
+            format_wxstr(_L("You are running a 32 bit build of %1% on 64-bit Windows."
+                "\nA 32 bit build will likely not be able to utilize all the RAM available in the system."
+                "\nPlease install a 64 bit build."
+                "\nDo you wish to continue?"), wxString(SLIC3R_APP_NAME)),
+            wxString(SLIC3R_APP_NAME), wxICON_QUESTION | wxYES_NO);
         if (dlg.ShowModal() != wxID_YES)
             return false;
     }
@@ -1393,7 +1385,8 @@ bool GUI_App::on_init_inner()
     // If load_language() fails, the application closes.
     load_language(wxString(), true);
 #ifdef _MSW_DARK_MODE
-    bool init_dark_color_mode = app_config->get_bool("dark_color_mode");
+    app_config->set("dark_color_mode", "1");
+    bool init_dark_color_mode = true;
     bool init_sys_menu_enabled = app_config->get_bool("sys_menu_enabled");
     NppDarkMode::InitDarkMode(init_dark_color_mode, init_sys_menu_enabled);
 #endif
@@ -1416,10 +1409,10 @@ bool GUI_App::on_init_inner()
     }
 
 #ifdef _MSW_DARK_MODE
-    // app_config can be updated in check_older_app_config(), so check if dark_color_mode and sys_menu_enabled was changed
-    if (bool new_dark_color_mode = app_config->get_bool("dark_color_mode");
-        init_dark_color_mode != new_dark_color_mode) {
-        NppDarkMode::SetDarkMode(new_dark_color_mode);
+    // Dark mode is the application appearance. An imported configuration cannot turn it off.
+    app_config->set("dark_color_mode", "1");
+    if (!init_dark_color_mode) {
+        NppDarkMode::SetDarkMode(true);
         init_ui_colours();
         update_ui_colours_from_appconfig();
     }
@@ -1437,7 +1430,7 @@ bool GUI_App::on_init_inner()
             RichMessageDialog
                 dlg(nullptr,
                     wxString::Format(_L("%s\nDo you want to continue?"), msg),
-                    "PrusaSlicer", wxICON_QUESTION | wxYES_NO);
+                    wxString(SLIC3R_APP_NAME), wxICON_QUESTION | wxYES_NO);
             dlg.ShowCheckBox(_L("Remember my choice"));
             if (dlg.ShowModal() != wxID_YES) return false;
 
@@ -1471,7 +1464,7 @@ bool GUI_App::on_init_inner()
         }
 
         // create splash screen with updated bmp
-        scrn = new SplashScreen(bmp.IsOk() ? bmp : get_bmp_bundle("PrusaSlicer", 400)->GetPreferredBitmapSizeAtScale(1.0), 
+        scrn = new SplashScreen(bmp.IsOk() ? bmp : get_bmp_bundle(logo_name(), 400)->GetPreferredBitmapSizeAtScale(1.0), 
                                 wxSPLASH_CENTRE_ON_SCREEN | wxSPLASH_TIMEOUT, 4000, splashscreen_pos);
 
         if (!default_splashscreen_pos)
@@ -1512,7 +1505,7 @@ bool GUI_App::on_init_inner()
                         , NotificationManager::NotificationLevel::ImportantNotificationLevel
                         , Slic3r::format(_u8L("New prerelease version %1% is available."), evt_string)
                         , _u8L("See Releases page.")
-                        , [](wxEvtHandler* evnthndlr) {wxGetApp().open_browser_with_warning_dialog("https://github.com/prusa3d/PrusaSlicer/releases"); return true; }
+                        , [](wxEvtHandler* evnthndlr) {wxGetApp().open_browser_with_warning_dialog("https://github.com/synchleague/SliceItAll/releases"); return true; }
                     );
                 }
             }
@@ -1619,8 +1612,10 @@ bool GUI_App::on_init_inner()
             // ensure the selected technology is ptFFF
             plater_->set_printer_technology(ptFFF);
     }
-    else
+    else {
         load_current_presets();
+        mainframe->adopt_selected_offline_printer();
+    }
 
     // Save the active profiles as a "saved into project".
     update_saved_preset_from_current_preset();
@@ -1684,16 +1679,14 @@ bool GUI_App::on_init_inner()
     {
         wxString preferences_item = _L("Restore window position on start");
         InfoDialog dialog(nullptr,
-            _L("PrusaSlicer started after a crash"),
-            format_wxstr(_L("PrusaSlicer crashed last time when attempting to set window position.\n"
+            format_wxstr(_L("%1% started after a crash"), wxString(SLIC3R_APP_NAME)),
+            format_wxstr(_L("%1% crashed last time when attempting to set window position.\n"
                 "We are sorry for the inconvenience, it unfortunately happens with certain multiple-monitor setups.\n"
-                "More precise reason for the crash: \"%1%\".\n"
-                "For more information see our GitHub issue tracker: \"%2%\" and \"%3%\"\n\n"
-                "To avoid this problem, consider disabling \"%4%\" in \"Preferences\". "
+                "More precise reason for the crash: \"%2%\".\n\n"
+                "To avoid this problem, consider disabling \"%3%\" in \"Preferences\". "
                 "Otherwise, the application will most likely crash again next time."),
+                wxString(SLIC3R_APP_NAME),
                 "<b>" + from_u8(crash_reason) + "</b>",
-                "<a href=http://github.com/prusa3d/PrusaSlicer/issues/2939>#2939</a>",
-                "<a href=http://github.com/prusa3d/PrusaSlicer/issues/5573>#5573</a>",
                 "<b>" + preferences_item + "</b>"),
             true, wxYES_NO);
 
@@ -1732,9 +1725,7 @@ bool GUI_App::dark_mode()
     // proper dark mode was first introduced.
     return wxPlatformInfo::Get().CheckOSVersion(10, 14) && mac_dark_mode();
 #else
-    if (wxGetApp().app_config->has("dark_color_mode"))
-        return wxGetApp().app_config->get_bool("dark_color_mode");
-    return check_dark_mode();
+    return true;
 #endif
 }
 
@@ -1745,7 +1736,7 @@ const wxColour GUI_App::get_label_default_clr_system()
 
 const wxColour GUI_App::get_label_default_clr_modified()
 {
-    return dark_mode() ? wxColour(253, 111, 40) : wxColour(252, 77, 1);
+    return dark_mode() ? wxColour(254, 50, 173) : wxColour(79, 9, 159);
 }
 
 const std::vector<std::string> GUI_App::get_mode_default_palette()
@@ -1764,13 +1755,13 @@ void GUI_App::init_ui_colours()
     m_color_label_default           = is_dark_mode ? wxColour(250, 250, 250): wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT);
     m_color_highlight_label_default = is_dark_mode ? wxColour(230, 230, 230): wxSystemSettings::GetColour(/*wxSYS_COLOUR_HIGHLIGHTTEXT*/wxSYS_COLOUR_WINDOWTEXT);
     m_color_highlight_default       = is_dark_mode ? wxColour(78, 78, 78)   : wxSystemSettings::GetColour(wxSYS_COLOUR_3DLIGHT);
-    m_color_hovered_btn_label       = is_dark_mode ? wxColour(253, 111, 40) : wxColour(252, 77, 1);
-    m_color_default_btn_label       = is_dark_mode ? wxColour(255, 181, 100): wxColour(203, 61, 0);
-    m_color_selected_btn_bg         = is_dark_mode ? wxColour(95, 73, 62)   : wxColour(228, 220, 216);
+    m_color_hovered_btn_label       = is_dark_mode ? wxColour(254, 50, 173) : wxColour(79, 9, 159);
+    m_color_default_btn_label       = is_dark_mode ? wxColour(221, 67, 241) : wxColour(79, 9, 159);
+    m_color_selected_btn_bg         = is_dark_mode ? wxColour(62, 28, 96)   : wxColour(232, 214, 242);
 //#else
 //    m_color_label_default = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT);
 //#endif
-    m_color_window_default          = is_dark_mode ? wxColour(43, 43, 43)   : wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
+    m_color_window_default          = is_dark_mode ? wxColour(28, 26, 36)   : wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
 }
 
 void GUI_App::update_ui_colours_from_appconfig()
@@ -2059,7 +2050,7 @@ void GUI_App::set_mode_palette(const std::vector<wxColour>& palette)
 
 bool GUI_App::suppress_round_corners() const
 {
-    return true;// app_config->get("suppress_round_corners") == "1";
+    return false;
 }
 
 wxSize GUI_App::get_min_size(wxWindow* display_win) const
@@ -2077,6 +2068,20 @@ wxSize GUI_App::get_min_size(wxWindow* display_win) const
         min_size.y = display_rect.GetHeight();
 
     return min_size;
+}
+
+wxSize GUI_App::get_startup_size(wxWindow* display_win) const
+{
+    const wxSize minimum = get_min_size(display_win);
+    wxSize size(minimum.x * 2, minimum.y * 2);
+    const wxRect work = wxDisplay(display_win).GetClientArea();
+    const int limit_w = std::max(minimum.x, work.GetWidth() - 64);
+    const int limit_h = std::max(minimum.y, work.GetHeight() - 64);
+    if (size.x > limit_w)
+        size.x = limit_w;
+    if (size.y > limit_h)
+        size.y = limit_h;
+    return size;
 }
 
 float GUI_App::toolbar_icon_scale(bool& is_custom) const
@@ -2120,8 +2125,8 @@ void GUI_App::check_printer_presets()
     for (const std::string& preset_name : preset_names)
         msg_text += "\n    \"" + from_u8(preset_name) + "\",";
     msg_text.RemoveLast();
-    msg_text += "\n\n" + _L("But since this version of PrusaSlicer we don't show this information in Printer Settings anymore.\n"
-                            "Settings will be available in physical printers settings.") + "\n\n" +
+    msg_text += "\n\n" + format_wxstr(_L("But since this version of %1% we don't show this information in Printer Settings anymore.\n"
+                            "Settings will be available in physical printers settings."), wxString(SLIC3R_APP_NAME)) + "\n\n" +
                          _L("By default new Printer devices will be named as \"Printer N\" during its creation.\n"
                             "Note: This name can be changed later from the physical printers settings");
 
@@ -2156,6 +2161,7 @@ void GUI_App::recreate_GUI(const wxString& msg_name)
     dlg.Update(80, _L("Loading of current presets") + dots);
     m_printhost_job_queue.reset(new PrintHostJobQueue(mainframe->printhost_queue_dlg()));
     load_current_presets();
+    mainframe->adopt_selected_offline_printer();
     mainframe->Show(true);
 
     dlg.Update(90, _L("Loading of a mode view") + dots);
@@ -2625,7 +2631,7 @@ bool GUI_App::load_language(wxString language, bool initial)
 #endif
         if (initial)
         	message + "\n\nApplication will close.";
-        wxMessageBox(message, "PrusaSlicer - Switching language failed", wxOK | wxICON_ERROR);
+        wxMessageBox(message, wxString(SLIC3R_APP_NAME) + " - " + _L("Switching language failed"), wxOK | wxICON_ERROR);
         if (initial)
 			std::exit(EXIT_FAILURE);
 		else
@@ -2724,8 +2730,7 @@ wxMenu* GUI_App::get_config_menu(MainFrame* main_frame)
         local_menu->Append(config_id_base + ConfigMenuWizard, config_wizard_name + dots, config_wizard_tooltip);
         local_menu->Append(config_id_base + ConfigMenuSnapshots, _L("&Configuration Snapshots") + dots, _L("Inspect / activate configuration snapshots"));
         local_menu->Append(config_id_base + ConfigMenuTakeSnapshot, _L("Take Configuration &Snapshot"), _L("Capture a configuration snapshot"));
-        local_menu->Append(config_id_base + ConfigMenuUpdateConf, _L("Check for Configuration Updates"), _L("Check for configuration updates"));
-        local_menu->Append(config_id_base + ConfigMenuUpdateApp, _L("Check for Application Updates"), _L("Check for new version of application"));
+        local_menu->Append(config_id_base + ConfigMenuUpdateApp, _L("Check for Application Updates"), _L("Check GitHub releases for a new version"));
 #if defined(__linux__) && defined(SLIC3R_DESKTOP_INTEGRATION) 
         //if (DesktopIntegrationDialog::integration_possible())
         local_menu->Append(config_id_base + ConfigMenuDesktopIntegration, _L("Desktop Integration"), _L("Desktop Integration"));    
@@ -2753,10 +2758,6 @@ wxMenu* GUI_App::get_config_menu(MainFrame* main_frame)
         switch (event.GetId() - config_id_base) {
         case ConfigMenuWizard:
             run_wizard(ConfigWizard::RR_USER);
-            break;
-        case ConfigMenuUpdateConf:
-            this->plater_->fetch_workflows_file_online_start();
-            check_updates(true);
             break;
         case ConfigMenuUpdateApp:
             app_version_check(true);
@@ -2808,6 +2809,8 @@ wxMenu* GUI_App::get_config_menu(MainFrame* main_frame)
 
                         // Load the currently selected preset into the GUI, update the preset selection box.
                         load_current_presets();
+                        if (mainframe)
+                            mainframe->adopt_selected_offline_printer();
                     } catch (std::exception &ex) {
                         GUI::show_error(nullptr, _L("Failed to activate configuration snapshot.") + "\n" + into_u8(ex.what()));
                     }
@@ -2877,6 +2880,11 @@ void GUI_App::open_preferences(const std::string& highlight_option /*= std::stri
 
     if (mainframe->preferences_dialog->seq_top_layer_only_changed())
         this->plater_->reload_print();
+
+    if (mainframe)
+        mainframe->sync_dashboard_site();
+    if (is_editor() && plater())
+        plater()->apply_editor_layout();
 
 #ifdef _WIN32
     if (is_editor()) {
@@ -3368,11 +3376,7 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
 {
     wxCHECK_MSG(mainframe != nullptr, false, "Internal error: Main frame not created / null");
 
-    // Loading of Config Wizard takes some time. 
-    // First part is to download neccessary data.
-    // That is done on worker thread while nice modal progress is shown.
-    // TRN: Progress dialog title
-    get_preset_updater_wrapper()->wizard_sync(preset_bundle, app_config->orig_version(), mainframe, reason == ConfigWizard::RunReason::RR_USER, _L("Opening Configuration Wizard"));
+    // Printer profiles are bundled with the application, so the wizard does not download them.
     // Then the wizard itself will start and that also takes time.
     // But for now no ui is shown until then. (Showing modal progress dialog while showing another would be a headacke)
     m_config_wizard = new ConfigWizard(mainframe);
@@ -3388,6 +3392,8 @@ bool GUI_App::run_wizard(ConfigWizard::RunReason reason, ConfigWizard::StartPage
 
     if (res) {
         load_current_presets();
+        if (mainframe)
+            mainframe->adopt_selected_offline_printer();
 
         for (Tab* tab : tabs_list) {
             if (tab->type() == Preset::TYPE_PRINTER) {
@@ -3540,6 +3546,12 @@ void GUI_App::window_pos_restore(wxTopLevelWindow* window, const std::string &na
         app_config->set("restore_win_position", (boost::format("crashed_at_%1%_size") % name).str());
         app_config->save();
         window->SetSize(rect.GetSize());
+        // A window still sitting on the old minimum picks up the larger startup size.
+        if (!metrics->get_maximized() && name == "mainframe") {
+            const wxSize minimum = get_min_size(window);
+            if (rect.GetWidth() <= minimum.GetWidth() + 16 && rect.GetHeight() <= minimum.GetHeight() + 16)
+                window->SetSize(get_startup_size(window));
+        }
 
         // revert "restore_win_position" value if application wasn't crashed
         app_config->set("restore_win_position", "1");
@@ -3594,7 +3606,11 @@ bool GUI_App::config_wizard_startup()
 }
 
 bool GUI_App::check_updates(const bool invoked_by_user)
-{	
+{
+    // Printer profiles are bundled. Do not download configuration from the network.
+    (void)invoked_by_user;
+    return true;
+#if 0
     PresetUpdater::UpdateResult updater_result;
     if (invoked_by_user)
     {
@@ -3616,22 +3632,23 @@ bool GUI_App::check_updates(const bool invoked_by_user)
 	}
     // Applicaiton will continue.
     return true;
+#endif
 }
 namespace {
 bool open_dialog_hyperlink_checkbox(wxWindow* parent, AppConfig* app_config)
 {
-    RichMessageDialog dialog(parent, _L("Open hyperlink in default browser?"), _L("PrusaSlicer: Open hyperlink"), wxICON_QUESTION | wxYES_NO);
+    RichMessageDialog dialog(parent, _L("Open hyperlink in default browser?"), format_wxstr(_L("%1%: Open hyperlink"), wxString(SLIC3R_APP_NAME)), wxICON_QUESTION | wxYES_NO);
     dialog.ShowCheckBox(_L("Remember my choice"));
     auto answer = dialog.ShowModal();
     bool launch = answer == wxID_YES;
     if (dialog.IsCheckBoxChecked()) {
         wxString preferences_item = _L("Suppress to open hyperlink in browser");
         wxString msg =
-            _L("PrusaSlicer will remember your choice.") + "\n\n" +
+            format_wxstr(_L("%1% will remember your choice."), wxString(SLIC3R_APP_NAME)) + "\n\n" +
             _L("You will not be asked about it again on hyperlinks hovering.") + "\n\n" +
             format_wxstr(_L("Visit \"Preferences\" and check \"%1%\"\nto changes your choice."), preferences_item);
 
-        MessageDialog msg_dlg(parent, msg, _L("PrusaSlicer: Don't ask me again"), wxOK | wxCANCEL | wxICON_INFORMATION);
+        MessageDialog msg_dlg(parent, msg, format_wxstr(_L("%1%: Don't ask me again"), wxString(SLIC3R_APP_NAME)), wxOK | wxCANCEL | wxICON_INFORMATION);
         if (msg_dlg.ShowModal() == wxID_CANCEL)
             return false;
         app_config->set("suppress_hyperlinks", answer == wxID_NO ? "1" : "0");
@@ -3640,7 +3657,7 @@ bool open_dialog_hyperlink_checkbox(wxWindow* parent, AppConfig* app_config)
 }
 bool open_dialog_hyperlink(wxWindow* parent)
 {
-    MessageDialog dialog(parent, _L("Open hyperlink in default browser?"), _L("PrusaSlicer: Open hyperlink"), wxICON_QUESTION | wxYES_NO);
+    MessageDialog dialog(parent, _L("Open hyperlink in default browser?"), format_wxstr(_L("%1%: Open hyperlink"), wxString(SLIC3R_APP_NAME)), wxICON_QUESTION | wxYES_NO);
     return dialog.ShowModal() == wxID_YES;
 }
 }
@@ -3682,7 +3699,7 @@ bool GUI_App::open_login_browser_with_dialog(const wxString& url, wxWindow* pare
 {
     bool auth_login_dialog_confirmed = app_config->get_bool("auth_login_dialog_confirmed");
     if (!auth_login_dialog_confirmed) {
-        RichMessageDialog dialog(parent, _L("Open default browser with Prusa Account Log in page?\n(If you select 'Yes', you will not be asked again.)"), _L("PrusaSlicer: Open Log in page"), wxICON_QUESTION | wxYES_NO);
+        RichMessageDialog dialog(parent, _L("Open the log in page in the default browser?\n(If you select 'Yes', you will not be asked again.)"), format_wxstr(_L("%1%: Open Log in page"), wxString(SLIC3R_APP_NAME)), wxICON_QUESTION | wxYES_NO);
          if (dialog.ShowModal() != wxID_YES)
              return false;
          app_config->set("auth_login_dialog_confirmed", "1");
@@ -3719,22 +3736,22 @@ bool GUI_App::open_login_browser_with_dialog(const wxString& url, wxWindow* pare
 #ifdef __WXMSW__
 void GUI_App::associate_3mf_files()
 {
-    associate_file_type(L".3mf", L"Prusa.Slicer.1", L"PrusaSlicer", true);
+    associate_file_type(L".3mf", L"SliceItAll.1", L"Slice it All", true);
 }
 
 void GUI_App::associate_stl_files()
 {
-    associate_file_type(L".stl", L"Prusa.Slicer.1", L"PrusaSlicer", true);
+    associate_file_type(L".stl", L"SliceItAll.1", L"Slice it All", true);
 }
 
 void GUI_App::associate_gcode_files()
 {
-    associate_file_type(L".gcode", L"PrusaSlicer.GCodeViewer.1", L"PrusaSlicerGCodeViewer", true);
+    associate_file_type(L".gcode", L"SliceItAll.GCodeViewer.1", L"Slice it All G-code Viewer", true);
 }
 
 void GUI_App::associate_bgcode_files()
 {
-    associate_file_type(L".bgcode", L"PrusaSlicer.GCodeViewer.1", L"PrusaSlicerGCodeViewer", true);
+    associate_file_type(L".bgcode", L"SliceItAll.GCodeViewer.1", L"Slice it All G-code Viewer", true);
 }
 #endif // __WXMSW__
 
@@ -4175,8 +4192,8 @@ void GUI_App::handle_connect_request_printer_select(const std::string& msg)
 void GUI_App::handle_connect_request_printer_select_inner(const std::string & msg)
 {
      BOOST_LOG_TRIVIAL(debug) << "Handling web request: " << msg;
-    // return to plater
-    this->mainframe->select_tab(size_t(0));
+    // return to the open project
+    this->mainframe->select_active_project_tab();
     if (!select_printer_from_connect(msg)) {
         // If printer was not selected, do not select filament.
         return;
@@ -4211,7 +4228,7 @@ void GUI_App::printables_download_request(const std::string& download_url, const
 }
 void GUI_App::printables_slice_request(const std::string& download_url, const std::string& model_url)
 {
-    this->mainframe->select_tab(size_t(0));
+    this->mainframe->select_active_project_tab();
     
     //lets always init so if the download dest folder was changed, new dest is used 
     boost::filesystem::path dest_folder(app_config->get("url_downloader_dest"));

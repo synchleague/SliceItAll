@@ -968,6 +968,16 @@ void GCodeGenerator::_do_export(Print& print, GCodeOutputStream &file, Thumbnail
         }
     }
 
+    // The Kobra S1 firmware is Anycubic's Klipper build. Its own profile disables M73
+    // and only accepts a 230x110 preview. A saved project can still carry Prusa defaults.
+    const bool kobra_s1 = print.config().printer_model.value == "KOBRAS1"
+        || print.config().printer_notes.value.find("PRINTER_MODEL_KOBRA_S1") != std::string::npos;
+    auto thumbnail_list = [&]() {
+        if (kobra_s1)
+            return GCodeThumbnails::make_and_check_thumbnail_list("230x110/PNG");
+        return GCodeThumbnails::make_and_check_thumbnail_list(print.full_print_config());
+    };
+
     // if exporting gcode in binary format: 
     // we generate here the data to be passed to the post-processor, who is responsible to export them to file 
     // 1) generate the thumbnails
@@ -977,7 +987,7 @@ void GCodeGenerator::_do_export(Print& print, GCodeOutputStream &file, Thumbnail
 
         // Unit tests or command line slicing may not define "thumbnails" or "thumbnails_format".
         // If "thumbnails_format" is not defined, export to PNG.
-        auto [thumbnails, errors] = GCodeThumbnails::make_and_check_thumbnail_list(print.full_print_config());
+        auto [thumbnails, errors] = thumbnail_list();
 
         if (errors != enum_bitmask<ThumbnailError>()) {
             std::string error_str = format("Invalid thumbnails value:");
@@ -1074,7 +1084,7 @@ void GCodeGenerator::_do_export(Print& print, GCodeOutputStream &file, Thumbnail
 
     if (! export_to_binary_gcode) {
         // if exporting gcode in ascii format, generate the thumbnails here
-        auto [thumbnails, errors] = GCodeThumbnails::make_and_check_thumbnail_list(print.full_print_config());
+        auto [thumbnails, errors] = thumbnail_list();
 
         if (errors != enum_bitmask<ThumbnailError>()) {
             std::string error_str = format("Invalid thumbnails value:");
@@ -1938,15 +1948,25 @@ void GCodeGenerator::print_machine_envelope(GCodeOutputStream &file, const Print
 
 std::string GCodeGenerator::_process_start_gcode(const Print& print, unsigned int current_extruder_id)
 {
+    // The Kobra S1 file check looks for ordinary M104/M109 lines. I1 belongs inside
+    // the printer's G9111 macro, and a heat command in this string would suppress
+    // the slicer's own M104 before G9111 and M109 after it. A saved project keeps
+    // the old start, so the export writes the official sequence directly.
+    std::string start_gcode = print.config().start_gcode.value;
+    const bool kobra_s1 = print.config().printer_model.value == "KOBRAS1"
+        || print.config().printer_notes.value.find("PRINTER_MODEL_KOBRA_S1") != std::string::npos;
+    if (kobra_s1)
+        start_gcode = "G9111 bedTemp=[first_layer_bed_temperature] extruderTemp=[first_layer_temperature[initial_tool]]\nM117\n";
+
     const int num_extruders            = print.config().nozzle_diameter.values.size();
     const int bed_temperature_extruder = print.config().bed_temperature_extruder;
     if (0 < bed_temperature_extruder && bed_temperature_extruder <= num_extruders) {
         const int first_layer_bed_temperature = print.config().first_layer_bed_temperature.get_at(bed_temperature_extruder - 1);
         DynamicConfig config;
         config.set_key_value("first_layer_bed_temperature", new ConfigOptionInts(num_extruders, first_layer_bed_temperature));
-        return this->placeholder_parser_process("start_gcode", print.config().start_gcode.value, current_extruder_id, &config);
+        return this->placeholder_parser_process("start_gcode", start_gcode, current_extruder_id, &config);
     } else {
-        return this->placeholder_parser_process("start_gcode", print.config().start_gcode.value, current_extruder_id);
+        return this->placeholder_parser_process("start_gcode", start_gcode, current_extruder_id);
     }
 }
 
@@ -2657,13 +2677,34 @@ LayerResult GCodeGenerator::process_layer(
     m_last_height = height;
 
     // Set new layer - this will change Z and force a retraction if retract_layer_change is enabled.
-    if (!first_layer && ! print.config().before_layer_gcode.value.empty()) {
+    // Anycubic Slicer Next puts the Kobra S1 purge in before-layer gcode and runs it
+    // on layer 0. That purge is the first extrusion the printer's file check accepts.
+    const bool kobra_s1_layer = print.config().printer_model.value == "KOBRAS1"
+        || print.config().printer_notes.value.find("PRINTER_MODEL_KOBRA_S1") != std::string::npos;
+    static constexpr const char *kobra_s1_purge =
+        "{if layer_num==0} ; PURGE LINE\n"
+        "M204 P500\n"
+        "SET_VELOCITY_LIMIT SQUARE_CORNER_VELOCITY=9\n"
+        "G1 Z0.50 F900 ; for object exclusion\n"
+        "G1 X89.365 Y255 F18000\n"
+        "G1 Z.25 F900\n"
+        "G1 E0.8 F2400\n"
+        "G1 E0.6 F2400\n"
+        "G1 F3000\n"
+        "G1 X158.835 Y255 E3.72454\n"
+        "G1 X158.835 Y255.45 E.0252\n"
+        "G1 X89.365 Y255.45 E3.72454\n"
+        "G1 X89.365 Y255.02 E.02305\n"
+        "G1 Z0.5 F600\n"
+        "{endif}";
+    const std::string before_layer = kobra_s1_layer ? std::string(kobra_s1_purge) : print.config().before_layer_gcode.value;
+    if ((kobra_s1_layer || !first_layer) && !before_layer.empty() && m_writer.extruder() != nullptr) {
         DynamicConfig config;
         config.set_key_value("layer_num",   new ConfigOptionInt(m_layer_index + 1));
         config.set_key_value("layer_z",     new ConfigOptionFloat(print_z));
         config.set_key_value("max_layer_z", new ConfigOptionFloat(m_max_layer_z));
         gcode += this->placeholder_parser_process("before_layer_gcode",
-            print.config().before_layer_gcode.value, m_writer.extruder()->id(), &config)
+            before_layer, m_writer.extruder()->id(), &config)
             + "\n";
     }
 

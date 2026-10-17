@@ -513,6 +513,7 @@ public:
     void                process() override;
     void                finalize() override { PrintBaseWithState<SLAPrintStep, slapsCount>::finalize_impl(m_objects); }
     void                cleanup() override {}
+    bool                is_step_done(SLAPrintStep step) const { return Inherited::is_step_done(step); }
     // Returns true if an object step is done on all objects and there's at least one object.
     bool                is_step_done(SLAPrintObjectStep step) const;
     // Returns true if the last step was finished with success.

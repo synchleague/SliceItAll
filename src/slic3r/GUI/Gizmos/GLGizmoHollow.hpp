@@ -19,6 +19,7 @@ namespace Slic3r {
 
 class ConfigOption;
 class ConfigOptionDef;
+class ModelVolume;
 
 namespace GUI {
 
@@ -62,6 +63,8 @@ private:
 
     float m_new_hole_radius = 2.f;        // Size of a new hole.
     float m_new_hole_height = 6.f;
+    // A new hole uses the distance to the inner surface when that wall is thin enough.
+    bool m_pierce_wall = true;
     mutable std::vector<bool> m_selected; // which holes are currently selected
 
     bool m_enable_hollowing = true;
@@ -98,6 +101,11 @@ private:
     void select_point(int i);
     void unselect_point(int i);
     void reload_cache();
+    float pierced_depth(const Vec3f& pos, const Vec3f& inward) const;
+    sla::HollowingConfig hollowing_config_from_object() const;
+    void apply_volume_meshes(ModelObject* object, std::vector<std::pair<ModelVolume*, indexed_triangle_set>>& meshes);
+    void hollow_object_mesh();
+    void cut_holes_into_mesh();
 
 protected:
     void on_set_state() override;

@@ -78,6 +78,14 @@ PresetUpdaterWrapper::~PresetUpdaterWrapper()
 
 bool PresetUpdaterWrapper::wizard_sync(const PresetBundle* preset_bundle, const Semver& old_slic3r_version, wxWindow* parent, bool full_sync, const wxString& headline)
 {
+    // Profiles are bundled. Do not contact profile servers.
+    (void)preset_bundle;
+    (void)old_slic3r_version;
+    (void)parent;
+    (void)full_sync;
+    (void)headline;
+    return true;
+#if 0
     if (m_modal_thread.joinable()) {
         // instead of canceling, we do not proceed with wizard sync
         return false;
@@ -146,6 +154,7 @@ bool PresetUpdaterWrapper::wizard_sync(const PresetBundle* preset_bundle, const 
     }
     bool res = !m_ui_status->get_canceled();
     return res;
+#endif
 }
 
 PresetUpdater::UpdateResult PresetUpdaterWrapper::check_updates_on_user_request(const PresetBundle* preset_bundle, const Semver& old_slic3r_version, wxWindow* parent)

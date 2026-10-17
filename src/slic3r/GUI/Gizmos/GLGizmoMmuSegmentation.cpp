@@ -56,13 +56,38 @@ std::string GLGizmoMmuSegmentation::on_get_name() const
 
 bool GLGizmoMmuSegmentation::on_is_selectable() const
 {
-    return (wxGetApp().preset_bundle->printers.get_edited_preset().printer_technology() == ptFFF
-            && wxGetApp().get_mode() != comSimple && wxGetApp().extruders_edited_cnt() > 1);
+    return true;
 }
 
 bool GLGizmoMmuSegmentation::on_is_activable() const
 {
-    return GLGizmoPainterBase::on_is_activable() && wxGetApp().extruders_edited_cnt() > 1;
+    const Selection& selection = m_parent.get_selection();
+    if (!selection.is_single_full_instance() || selection.is_wipe_tower())
+        return false;
+
+    const Selection::IndicesList& list = selection.get_volume_idxs();
+    return std::all_of(list.cbegin(), list.cend(), [&selection](unsigned int idx) {
+        return !selection.get_volume(idx)->is_outside;
+    });
+}
+
+static void ensure_paint_palette(std::vector<std::string>& names, std::vector<ColorRGBA>& colors)
+{
+    if (names.empty()) {
+        names.emplace_back(_u8L("Color") + " 1");
+        names.emplace_back(_u8L("Color") + " 2");
+    } else if (names.size() == 1) {
+        names.emplace_back(_u8L("Color") + " 2");
+    }
+
+    const ColorRGBA grey{ 0.55f, 0.55f, 0.55f, 1.f };
+    const ColorRGBA magenta{ 0.996f, 0.196f, 0.678f, 1.f };
+    if (colors.empty())
+        colors.push_back(grey);
+    if (colors.size() == 1)
+        colors.push_back(magenta);
+    while (colors.size() < names.size())
+        colors.push_back(colors.back());
 }
 
 static std::vector<std::string> get_extruders_names()
@@ -104,9 +129,10 @@ void GLGizmoMmuSegmentation::init_extruders_data()
 {
     m_original_extruders_names     = get_extruders_names();
     m_original_extruders_colors    = wxGetApp().plater()->get_extruder_colors_from_plater_config();
+    ensure_paint_palette(m_original_extruders_names, m_original_extruders_colors);
     m_modified_extruders_colors    = m_original_extruders_colors;
     m_first_selected_extruder_idx  = 0;
-    m_second_selected_extruder_idx = 1;
+    m_second_selected_extruder_idx = m_original_extruders_colors.size() > 1 ? 1 : 0;
 }
 
 bool GLGizmoMmuSegmentation::on_init()
@@ -171,12 +197,14 @@ void GLGizmoMmuSegmentation::render_painter_gizmo()
 void GLGizmoMmuSegmentation::data_changed(bool is_serializing)
 {
     GLGizmoPainterBase::data_changed(is_serializing);
-    if (m_state != On || wxGetApp().preset_bundle->printers.get_edited_preset().printer_technology() != ptFFF || wxGetApp().extruders_edited_cnt() <= 1)
+    if (m_state != On)
         return;
 
     ModelObject* model_object = m_c->selection_info()->model_object();
-    const std::vector<ColorRGBA> current_colors =
+    std::vector<std::string> current_names = get_extruders_names();
+    std::vector<ColorRGBA> current_colors =
         wxGetApp().plater()->get_extruder_colors_from_plater_config();
+    ensure_paint_palette(current_names, current_colors);
     if (int prev_extruders_count = int(m_original_extruders_colors.size());
         prev_extruders_count != int(current_colors.size()) || current_colors != m_original_extruders_colors) {
         if (int(current_colors.size()) > int(GLGizmoMmuSegmentation::EXTRUDERS_LIMIT))
@@ -289,11 +317,8 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
     if (!m_c->selection_info()->model_object())
         return;
 
-    const float approx_height = m_imgui->scaled(25.35f);
-                            y = std::min(y, bottom_limit - approx_height);
-    ImGuiPureWrap::set_next_window_pos(x, y, ImGuiCond_Always);
-
-    ImGuiPureWrap::begin(get_name(), ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+    ImGuiPureWrap::begin(get_name(), ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+    GLGizmoBase::place_input_window(get_name(), x, y, bottom_limit);
 
     // First calculate width of all the texts that are could possibly be shown. We will decide set the dialog width based on that:
     const float clipping_slider_left     = std::max(ImGuiPureWrap::calc_text_size(m_desc.at("clipping_of_view")).x,

@@ -200,7 +200,7 @@ static void add_config_substitutions(const ConfigSubstitutions& conf_substitutio
 static wxString substitution_message(const wxString& changes)
 {
 	return
-		_L("Most likely the configuration was produced by a newer version of PrusaSlicer or by some PrusaSlicer fork.") + " " +
+		format_wxstr(_L("Most likely the configuration was produced by a newer version of %1% or by another slicer."), wxString(SLIC3R_APP_NAME)) + " " +
 		_L("The following values were substituted:") + "\n" + changes + "\n\n" +
 		_L("Review the substitutions and adjust them if needed.");
 }

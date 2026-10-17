@@ -37,11 +37,19 @@
 #include "NotificationManager.hpp"
 #include "MsgDialog.hpp"
 
+#include <algorithm>
+#include <map>
+#include <string>
+
 #include <boost/algorithm/string.hpp>
 #include <wx/progdlg.h>
 #include <wx/listbook.h>
 #include <wx/numformatter.h>
 #include <wx/bookctrl.h> // IWYU pragma: keep
+#include <wx/choice.h>
+#include <wx/treectrl.h>
+#include <wx/button.h>
+#include <wx/dcbuffer.h>
 
 #include "slic3r/Utils/FixModelByWin10.hpp"
 
@@ -85,13 +93,9 @@ static void take_snapshot(const wxString& snapshot_name)
 }
 
 ObjectList::ObjectList(wxWindow* parent) :
-    wxDataViewCtrl(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, 
-#ifdef _WIN32
-        wxBORDER_SIMPLE | 
-#endif
-        wxDV_MULTIPLE)
+    wxDataViewCtrl(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxDV_NO_HEADER | wxDV_MULTIPLE)
 {
-    wxGetApp().UpdateDVCDarkUI(this, true);
+    style_model_list();
 
     // create control
     create_objects_ctrl();
@@ -166,6 +170,14 @@ ObjectList::ObjectList(wxWindow* parent) :
 #ifdef __WXMSW__
         m_last_selected_column = new_selected_column;
 #endif //__WXMSW__
+
+        if (m_objects_model->GetItemType(m_last_selected_item) == itPlate) {
+            const int bed = m_objects_model->GetPlateIndex(m_last_selected_item);
+            if (bed >= 0)
+                if (GLCanvas3D* canvas = wxGetApp().plater()->canvas3D())
+                    canvas->select_bed(bed, true);
+            return;
+        }
 
         selection_changed();
 #ifndef __WXMSW__
@@ -4010,6 +4022,24 @@ void ObjectList::update_selections_on_canvas()
     canvas->render();
 }
 
+void ObjectList::select_object_instance(int obj_idx, int inst_idx)
+{
+    if (!m_objects || obj_idx < 0 || obj_idx >= int(m_objects->size()))
+        return;
+
+    wxDataViewItem item = m_objects_model->GetItemById(obj_idx);
+    if (inst_idx >= 0) {
+        const wxDataViewItem instance = m_objects_model->GetItemByInstanceId(obj_idx, inst_idx);
+        if (instance.IsOk())
+            item = instance;
+    }
+    if (!item.IsOk())
+        return;
+
+    select_item(item);
+    update_selections_on_canvas();
+}
+
 void ObjectList::select_item(const wxDataViewItem& item)
 {
     if (! item.IsOk()) { return; }
@@ -4782,8 +4812,18 @@ void ObjectList::update_item_error_icon(const int obj_idx, const int vol_idx) co
     }
 }
 
+void ObjectList::style_model_list()
+{
+    SetFont(wxGetApp().normal_font());
+    SetBackgroundColour(wxGetApp().get_window_default_clr());
+    SetForegroundColour(wxGetApp().get_label_clr_default());
+    const int em = std::max(1, wxGetApp().em_unit());
+    SetRowHeight(std::max(30, em * 2));
+}
+
 void ObjectList::msw_rescale()
 {
+    style_model_list();
     set_min_height();
 
     const int em = wxGetApp().em_unit();
@@ -4798,7 +4838,7 @@ void ObjectList::msw_rescale()
 
 void ObjectList::sys_color_changed()
 {
-    wxGetApp().UpdateDVCDarkUI(this, true);
+    style_model_list();
 
     // update existing items with bitmaps
     m_objects_model->UpdateBitmaps();
@@ -5033,6 +5073,162 @@ ModelObject* ObjectList::object(const int obj_idx) const
         return nullptr;
 
     return (*m_objects)[obj_idx];
+}
+
+class AddPlateButton : public wxPanel
+{
+public:
+    explicit AddPlateButton(wxWindow* parent)
+        : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE)
+    {
+        SetBackgroundStyle(wxBG_STYLE_PAINT);
+        SetBackgroundColour(wxGetApp().get_window_default_clr());
+        SetFont(wxGetApp().normal_font());
+        SetCursor(wxCURSOR_HAND);
+        const wxSize text = GetTextExtent(_L("Add build plate"));
+        SetMinSize(wxSize(text.x + 28, std::max(32, text.y + 14)));
+        Bind(wxEVT_PAINT, &AddPlateButton::on_paint, this);
+        Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent& event) {
+            set_hover(true);
+            event.Skip();
+        });
+        Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent& event) {
+            // The tooltip is a separate window, so it reports a leave while the pointer is still over this button.
+            const wxPoint pos = ScreenToClient(wxGetMousePosition());
+            if (!GetClientRect().Contains(pos))
+                set_hover(false);
+            event.Skip();
+        });
+    }
+
+private:
+    bool m_hover{ false };
+
+    void set_hover(bool hover)
+    {
+        if (m_hover == hover)
+            return;
+        m_hover = hover;
+        Refresh(false);
+    }
+
+    void on_paint(wxPaintEvent&)
+    {
+        wxAutoBufferedPaintDC dc(this);
+        const wxSize size = GetClientSize();
+        const wxColour page = GetBackgroundColour();
+        dc.SetPen(page);
+        dc.SetBrush(page);
+        dc.DrawRectangle(0, 0, size.x, size.y);
+        if (size.x < 4 || size.y < 4)
+            return;
+
+        const bool enabled = IsEnabled();
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.SetBrush(enabled && m_hover ? wxColour(72, 36, 86) : wxColour(48, 48, 60));
+        dc.DrawRoundedRectangle(0, 0, size.x, size.y, size.y / 2);
+        if (enabled) {
+            dc.SetPen(wxPen(wxColour(254, 50, 173), 1));
+            dc.SetBrush(*wxTRANSPARENT_BRUSH);
+            dc.DrawRoundedRectangle(1, 1, size.x - 2, size.y - 2, size.y / 2);
+        }
+
+        const wxString label = _L("Add build plate");
+        dc.SetFont(GetFont());
+        dc.SetTextForeground(enabled ? wxColour(254, 50, 173) : wxColour(140, 140, 150));
+        const wxSize text = dc.GetTextExtent(label);
+        dc.DrawText(label, (size.x - text.x) / 2, (size.y - text.y) / 2);
+    }
+};
+
+ModelsPanel::ModelsPanel(wxWindow* parent)
+    : wxPanel(parent)
+{
+    SetBackgroundColour(wxGetApp().get_window_default_clr());
+
+    auto* top = new wxBoxSizer(wxVERTICAL);
+    auto* bar = new wxBoxSizer(wxHORIZONTAL);
+
+    auto* add_bed = new AddPlateButton(this);
+    m_add_bed = add_bed;
+    m_add_bed->SetToolTip(_L("Add another build plate."));
+    m_add_bed->Enable(s_multiple_beds.get_number_of_beds() < s_multiple_beds.get_max_beds());
+
+    bar->AddStretchSpacer(1);
+    bar->Add(m_add_bed, 0, wxALIGN_CENTER_VERTICAL);
+    top->Add(bar, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 8);
+
+    m_tools_sizer = new wxBoxSizer(wxVERTICAL);
+    top->Add(m_tools_sizer, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 6);
+    SetSizer(top);
+
+    m_add_bed->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent&) {
+        if (m_add_bed->IsEnabled())
+            add_build_plate();
+    });
+    Bind(wxEVT_IDLE, &ModelsPanel::on_idle, this);
+}
+
+void ModelsPanel::set_object_list(ObjectList* list)
+{
+    m_object_list = list;
+    sync_plates();
+}
+
+void ModelsPanel::sync_plates()
+{
+    if (!m_object_list)
+        return;
+    ObjectDataViewModel* model = m_object_list->GetModel();
+    if (!model)
+        return;
+
+    std::vector<int> beds;
+    const Plater* plater = wxGetApp().plater();
+    const std::map<ObjectID, int>& assignment = s_multiple_beds.get_inst_map();
+    if (plater) {
+        beds.reserve(plater->model().objects.size());
+        for (const ModelObject* object : plater->model().objects) {
+            int bed = 0;
+            if (object) {
+                for (const ModelInstance* instance : object->instances) {
+                    if (!instance)
+                        continue;
+                    const auto it = assignment.find(instance->id());
+                    if (it != assignment.end()) {
+                        bed = it->second;
+                        break;
+                    }
+                }
+            }
+            beds.push_back(bed);
+        }
+    }
+    model->set_plate_groups(beds, std::max(1, s_multiple_beds.get_number_of_beds()));
+    if (m_add_bed) {
+        const bool can_add = s_multiple_beds.get_number_of_beds() < s_multiple_beds.get_max_beds();
+        if (m_add_bed->IsEnabled() != can_add)
+            m_add_bed->Enable(can_add);
+    }
+}
+
+void ModelsPanel::add_build_plate()
+{
+    if (!s_multiple_beds.add_bed())
+        return;
+    if (Plater* plater = wxGetApp().plater()) {
+        if (GLCanvas3D* canvas = plater->canvas3D())
+            canvas->select_bed(s_multiple_beds.get_number_of_beds() - 1, true);
+    }
+    sync_plates();
+}
+
+void ModelsPanel::on_idle(wxIdleEvent& evt)
+{
+    evt.Skip();
+    if (!IsShownOnScreen())
+        return;
+    sync_plates();
 }
 
 } //namespace GUI

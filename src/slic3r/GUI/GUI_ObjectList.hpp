@@ -12,6 +12,7 @@
 #include <wx/bitmap.h>
 #include <wx/dataview.h>
 #include <wx/menu.h>
+#include <wx/panel.h>
 
 #include "Event.hpp"
 #include "wxExtensions.hpp"
@@ -22,6 +23,11 @@
 class wxBoxSizer;
 class wxBitmapComboBox;
 class wxMenuItem;
+class wxButton;
+class wxChoice;
+class wxIdleEvent;
+class wxTreeCtrl;
+class wxTreeEvent;
 
 namespace Slic3r {
 class ConfigOptionsGroup;
@@ -361,6 +367,7 @@ public:
     void set_selection_mode(SELECTION_MODE mode) { m_selection_mode = mode; }
     void update_selections();
     void update_selections_on_canvas();
+    void select_object_instance(int obj_idx, int inst_idx);
     void select_item(const wxDataViewItem& item);
     void select_item(std::function<wxDataViewItem()> get_item);
     void select_items(const wxDataViewItemArray& sels);
@@ -401,6 +408,7 @@ public:
 
     void msw_rescale();
     void sys_color_changed();
+    void style_model_list();
 
     void update_after_undo_redo();
     //update printable state for item from objects model
@@ -431,6 +439,24 @@ private:
     void OnEditingDone(wxDataViewEvent &event);
 };
 
+// Models notebook page: object list, grouped either by build plate or by instance.
+class ModelsPanel : public wxPanel
+{
+    wxPanel*    m_add_bed { nullptr };
+    wxBoxSizer* m_tools_sizer { nullptr };
+    ObjectList* m_object_list { nullptr };
+
+public:
+    explicit ModelsPanel(wxWindow* parent);
+
+    wxBoxSizer* tools_sizer() const { return m_tools_sizer; }
+    void        set_object_list(ObjectList* list);
+
+private:
+    void add_build_plate();
+    void on_idle(wxIdleEvent& evt);
+    void sync_plates();
+};
 
 }}
 

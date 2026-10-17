@@ -29,6 +29,7 @@
 #include "Repetier.hpp"
 #include "MKS.hpp"
 #include "Moonraker.hpp"
+#include "Anycubic.hpp"
 #include "PrusaConnect.hpp"
 #include "../GUI/PrintHostDialogs.hpp"
 
@@ -67,6 +68,8 @@ PrintHost* PrintHost::get_print_host(DynamicPrintConfig *config)
             case htPrusaConnectNew: return new PrusaConnectNew(config);
             case htMKS:       return new MKS(config);
             case htMoonraker: return new Moonraker(config);
+            case htAnycubic:  return new Anycubic(config);
+            case htOffline:   return nullptr;
             default:          return nullptr;
         }
     } else {

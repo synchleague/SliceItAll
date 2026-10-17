@@ -37,6 +37,7 @@ public:
     ConfigOptionsGroup* get_og() { return m_og.get(); }
     const ConfigOptionsGroup* get_og() const { return m_og.get(); }
     wxWindow*           parent() const {return m_parent; }
+    void                set_parent(wxWindow* parent) { m_parent = parent; }
 };
 
 

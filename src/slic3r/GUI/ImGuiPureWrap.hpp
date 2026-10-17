@@ -152,14 +152,14 @@ namespace ImGuiPureWrap
     void end_menu();
     bool menu_item_with_icon(const char* label, const char* shortcut, ImVec2 icon_size = ImVec2(0, 0), ImU32 icon_color = 0, bool selected = false, bool enabled = true);
 
-    const ImVec4 COL_GREY_DARK         = { 0.33f, 0.33f, 0.33f, 1.0f };
-    const ImVec4 COL_GREY_LIGHT        = { 0.4f, 0.4f, 0.4f, 1.0f };
-    const ImVec4 COL_ORANGE_DARK       = { 0.67f, 0.36f, 0.19f, 1.0f };
-    const ImVec4 COL_ORANGE_LIGHT      = { 0.923f, 0.504f, 0.264f, 1.0f };
-    const ImVec4 COL_WINDOW_BACKGROUND = { 0.13f, 0.13f, 0.13f, 0.8f };
-    const ImVec4 COL_BUTTON_BACKGROUND = COL_ORANGE_DARK;
-    const ImVec4 COL_BUTTON_HOVERED    = COL_ORANGE_LIGHT;
-    const ImVec4 COL_BUTTON_ACTIVE     = COL_BUTTON_HOVERED;
+    const ImVec4 COL_GREY_DARK         = { 0.18f, 0.17f, 0.21f, 1.0f };
+    const ImVec4 COL_GREY_LIGHT        = { 0.28f, 0.26f, 0.32f, 1.0f };
+    const ImVec4 COL_ORANGE_DARK       = { 0.310f, 0.035f, 0.624f, 1.0f };
+    const ImVec4 COL_ORANGE_LIGHT      = { 0.996f, 0.196f, 0.678f, 1.0f };
+    const ImVec4 COL_WINDOW_BACKGROUND = { 0.110f, 0.102f, 0.141f, 0.96f };
+    const ImVec4 COL_BUTTON_BACKGROUND = { 0.18f, 0.17f, 0.22f, 1.0f };
+    const ImVec4 COL_BUTTON_HOVERED    = { 0.42f, 0.12f, 0.32f, 1.0f };
+    const ImVec4 COL_BUTTON_ACTIVE     = COL_ORANGE_LIGHT;
 }
 
 #endif // slic3r_ImGuiPureWrap_hpp_

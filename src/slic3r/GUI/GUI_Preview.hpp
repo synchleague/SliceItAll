@@ -138,6 +138,7 @@ public:
 
     void render_sliders(GLCanvas3D& canvas);
     float get_layers_slider_width(bool disregard_visibility = false) const;
+    double get_current_layer_z() const;
     float get_moves_slider_height() const;
 
     bool is_loaded() const { return m_loaded; }

@@ -634,15 +634,11 @@ GLGizmoRotate3D::RotoptimzeWindow::RotoptimzeWindow(ImGuiWrapper *   imgui,
                                                     State &          state,
                                                     const Alignment &alignment)
 {
-    ImGuiPureWrap::begin(_u8L("Optimize orientation"), ImGuiWindowFlags_NoMove |
-                                     ImGuiWindowFlags_AlwaysAutoResize |
-                                     ImGuiWindowFlags_NoCollapse);
+    const std::string title = _u8L("Optimize orientation");
+    ImGuiPureWrap::begin(title, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
 
-    // adjust window position to avoid overlap the view toolbar
-    float win_h = ImGui::GetWindowHeight();
     float x = alignment.x, y = alignment.y;
-    y = std::min(y, alignment.bottom_limit - win_h);
-    ImGui::SetWindowPos(ImVec2(x, y), ImGuiCond_Always);
+    GLGizmoBase::place_input_window(title, x, y, alignment.bottom_limit);
 
     float max_text_w = 0.;
     auto padding = ImGui::GetStyle().FramePadding;

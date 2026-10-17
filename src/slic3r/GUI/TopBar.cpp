@@ -10,6 +10,7 @@
 #include <wx/sizer.h>
 
 wxDEFINE_EVENT(wxCUSTOMEVT_TOPBAR_SEL_CHANGED, wxCommandEvent);
+wxDEFINE_EVENT(wxCUSTOMEVT_TOPBAR_PAGE_CLOSE, wxCommandEvent);
 
 using namespace Slic3r::GUI;
 
@@ -52,20 +53,67 @@ TopBarItemsCtrl::Button::Button(wxWindow* parent, const wxString& label, const s
     Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent& event) { set_hovered(false); event.Skip(); });
 
     Bind(wxEVT_PAINT,        [this](wxPaintEvent&) { render(); });
-#ifdef __linux__
-    Bind(wxEVT_LEFT_UP,      [this](wxMouseEvent& event) {
-#else
-    Bind(wxEVT_LEFT_DOWN,    [this](wxMouseEvent& event) {
-#endif
+    auto post_click = [this](const wxMouseEvent& event, bool close) {
         wxCommandEvent evt(wxEVT_BUTTON, GetId());
+        if (!close && m_closable) {
+            int zone = int(1.6 * em_unit(this));
+            if (zone < 16)
+                zone = 16;
+            if (event.GetX() >= GetSize().GetWidth() - zone)
+                close = true;
+        }
+        evt.SetInt(close ? 1 : 0);
         GetEventHandler()->AddPendingEvent(evt);
+    };
+#ifdef __linux__
+    Bind(wxEVT_LEFT_UP, [post_click](wxMouseEvent& event) {
+#else
+    Bind(wxEVT_LEFT_DOWN, [post_click](wxMouseEvent& event) {
+#endif
+        post_click(event, false);
         event.Skip();
     });
+    Bind(wxEVT_MIDDLE_UP, [post_click](wxMouseEvent& event) {
+        post_click(event, true);
+        event.Skip();
+    });
+}
+
+void TopBarItemsCtrl::Button::set_closable(bool closable)
+{
+    m_closable = closable;
+    set_text(m_label);
+}
+
+void TopBarItemsCtrl::Button::set_text(const wxString& label)
+{
+    m_label = label;
+    const int btn_margin = em_unit(this);
+    int x = 0;
+    int y = 0;
+    GetTextExtent(label.IsEmpty() ? wxString("a") : label, &x, &y);
+    const int close_w = m_closable ? int(1.8 * btn_margin) : 0;
+    const wxSize size(x + 4 * btn_margin + close_w, y + int(1.5 * btn_margin));
+    SetMinSize(size);
+    Refresh();
+}
+
+void TopBarItemsCtrl::Button::use_tab_style()
+{
+    m_is_tab = true;
+    set_selected(m_is_selected);
 }
 
 void TopBarItemsCtrl::Button::set_selected(bool selected)
 {
     m_is_selected = selected;
+
+    if (m_is_tab) {
+        m_foreground_color = wxGetApp().get_label_clr_default();
+        m_background_color = selected ? wxColour(47, 47, 56) : wxGetApp().get_window_default_clr();
+        Refresh();
+        return;
+    }
 
     m_foreground_color = m_is_selected ? wxGetApp().get_window_default_clr(): wxGetApp().get_label_clr_default() ;
     m_background_color = m_is_selected ? wxGetApp().get_label_clr_default() : 
@@ -83,6 +131,15 @@ void TopBarItemsCtrl::Button::set_hovered(bool hovered)
 #ifdef _WIN32
     this->GetParent()->Refresh(); // force redraw a background of the selected mode button
 #endif /* no _WIN32 */
+
+    if (m_is_tab) {
+        m_background_color = m_is_selected ? wxColour(47, 47, 56) :
+                             hovered       ? wxColour(60, 60, 68) :
+                                             wxGetApp().get_window_default_clr();
+        this->Refresh();
+        this->Update();
+        return;
+    }
 
     m_background_color =    m_is_selected ? wxGetApp().get_label_clr_default()     :
                             hovered       ? wxGetApp().get_color_selected_btn_bg() :
@@ -104,11 +161,17 @@ void TopBarItemsCtrl::Button::render()
 
     int em = em_unit(this);
 
-    // Draw def rect with rounded corners
-
     dc.SetPen(m_background_color);
     dc.SetBrush(m_background_color);
-    dc.DrawRoundedRectangle(rc, int(0.4* em));
+    if (m_is_tab)
+        dc.DrawRectangle(rc);
+    else
+        dc.DrawRoundedRectangle(rc, int(0.4* em));
+
+    if (m_is_tab && m_is_selected) {
+        dc.SetPen(wxPen(wxColour(254, 50, 173), 2));
+        dc.DrawLine(int(0.6 * em), rc.height - 2, rc.width - int(0.6 * em), rc.height - 2);
+    }
 
     wxPoint pt = { 0, 0 };
 
@@ -125,9 +188,11 @@ void TopBarItemsCtrl::Button::render()
     // Draw text
 
     if (!text.IsEmpty()) {
+        const int close_pad = m_closable ? int(1.8 * em) : 0;
         wxSize labelSize = dc.GetTextExtent(text);
-        if (labelSize.x > rc.width)
-            text = wxControl::Ellipsize(text, dc, wxELLIPSIZE_END, rc.width);
+        if (labelSize.x > rc.width - close_pad)
+            text = wxControl::Ellipsize(text, dc, wxELLIPSIZE_END, std::max(8, rc.width - close_pad));
+        labelSize = dc.GetTextExtent(text);
         if (!m_bmp_bundle.IsOk())
             pt.x += (rc.width - pt.x - labelSize.x) / 2;
         pt.y = (rc.height - labelSize.y) / 2;
@@ -135,6 +200,12 @@ void TopBarItemsCtrl::Button::render()
         dc.SetTextForeground(m_foreground_color);
         dc.SetFont(GetFont());
         dc.DrawText(text, pt);
+
+        if (m_closable) {
+            const wxString cross = wxString::FromUTF8("×");
+            const wxSize cross_size = dc.GetTextExtent(cross);
+            dc.DrawText(cross, rc.width - cross_size.x - int(0.45 * em), (rc.height - cross_size.y) / 2);
+        }
 
         pt.x += labelSize.x + int(0.5 * em);
 
@@ -234,6 +305,10 @@ void TopBarItemsCtrl::UnselectPopupButtons()
 {
     if (m_menu_btn)
         m_menu_btn  ->set_selected(false);
+    if (m_file_btn)
+        m_file_btn->set_selected(false);
+    if (m_app_btn)
+        m_app_btn->set_selected(false);
     m_workspace_btn ->set_selected(false);
     m_account_btn   ->set_selected(false);
 }
@@ -413,7 +488,8 @@ TopBarItemsCtrl::TopBarItemsCtrl(wxWindow *parent, TopBarMenus* menus/* = nullpt
     m_sizer->SetFlexibleDirection(wxHORIZONTAL);
     this->SetSizer(m_sizer);
 
-    wxBoxSizer* left_sizer = new wxBoxSizer(wxHORIZONTAL);
+    m_left_sizer = new wxBoxSizer(wxHORIZONTAL);
+    wxBoxSizer* left_sizer = m_left_sizer;
 /*
 #ifdef __APPLE__
     auto logo = new wxStaticBitmap(this, wxID_ANY, *get_bmp_bundle(wxGetApp().logo_name(), 40));
@@ -543,7 +619,7 @@ void TopBarItemsCtrl::UpdateSelection()
     for (Button* btn : m_pageButtons)
         btn->set_selected(false);
 
-    if (m_selection >= 0)
+    if (m_selection >= 0 && m_selection < int(m_pageButtons.size()))
         m_pageButtons[m_selection]->set_selected(true);
 
     Refresh();
@@ -557,12 +633,50 @@ void TopBarItemsCtrl::SetSelection(int sel, bool force /*= false*/)
     UpdateSelection();
 }
 
+void TopBarItemsCtrl::set_window_menus(wxMenu* file_menu, wxMenu* app_menu)
+{
+    m_file_menu = file_menu;
+    m_app_menu = app_menu;
+    if (!m_left_sizer || m_file_btn || !file_menu || !app_menu || !m_menus)
+        return;
+
+    m_file_btn = new ButtonWithPopup(this, _L("File"));
+    m_file_btn->SetToolTip(_L("Project files"));
+    m_file_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        if (!m_file_menu)
+            return;
+        m_file_btn->set_selected(true);
+        m_menus->Popup(this, m_file_menu, m_file_btn->get_popup_pos());
+    });
+
+    m_app_btn = new ButtonWithPopup(this, wxString::FromUTF8("☰"));
+    m_app_btn->SetToolTip(_L("Edit, plugins, window, view, configuration and help"));
+    m_app_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        if (!m_app_menu)
+            return;
+        m_app_btn->set_selected(true);
+        m_menus->Popup(this, m_app_menu, m_app_btn->get_popup_pos());
+    });
+
+    m_left_sizer->Insert(0, m_app_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, m_btn_margin);
+    m_left_sizer->Insert(0, m_file_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, m_btn_margin);
+    Layout();
+}
+
 bool TopBarItemsCtrl::InsertPage(size_t n, const wxString& text, bool bSelect/* = false*/, const std::string& bmp_name/* = ""*/)
 {
     Button* btn = new Button(this, text);
+    btn->use_tab_style();
     btn->Bind(wxEVT_BUTTON, [this, btn](wxCommandEvent& event) {
         if (auto it = std::find(m_pageButtons.begin(), m_pageButtons.end(), btn); it != m_pageButtons.end()) {
-            m_selection = it - m_pageButtons.begin();
+            const int index = int(it - m_pageButtons.begin());
+            if (event.GetInt() == 1) {
+                wxCommandEvent evt(wxCUSTOMEVT_TOPBAR_PAGE_CLOSE);
+                evt.SetId(index);
+                wxPostEvent(this->GetParent(), evt);
+                return;
+            }
+            m_selection = index;
             wxCommandEvent evt = wxCommandEvent(wxCUSTOMEVT_TOPBAR_SEL_CHANGED);
             evt.SetId(m_selection);
             wxPostEvent(this->GetParent(), evt);
@@ -570,9 +684,16 @@ bool TopBarItemsCtrl::InsertPage(size_t n, const wxString& text, bool bSelect/* 
         }
     });
 
+    if (n > m_pageButtons.size())
+        n = m_pageButtons.size();
     m_pageButtons.insert(m_pageButtons.begin() + n, btn);
     m_buttons_sizer->Insert(n, new wxSizerItem(btn, 0, wxALIGN_CENTER_VERTICAL));
     m_buttons_sizer->SetCols(m_buttons_sizer->GetCols() + 1);
+    if (bSelect)
+        m_selection = int(n);
+    else if (m_selection >= int(n))
+        ++m_selection;
+    UpdateSelection();
 
     update_btns_width();
     UpdateSearchSizeAndPosition();
@@ -582,6 +703,12 @@ bool TopBarItemsCtrl::InsertPage(size_t n, const wxString& text, bool bSelect/* 
 
 void TopBarItemsCtrl::RemovePage(size_t n)
 {
+    if (n >= m_pageButtons.size())
+        return;
+    if (m_selection == int(n))
+        m_selection = -1;
+    else if (m_selection > int(n))
+        --m_selection;
     auto btn = m_pageButtons[n];
     m_pageButtons.erase(m_pageButtons.begin() + n);
     m_buttons_sizer->Remove(n);
@@ -598,7 +725,16 @@ void TopBarItemsCtrl::RemovePage(size_t n)
 void TopBarItemsCtrl::SetPageText(size_t n, const wxString& strText)
 {
     auto btn = m_pageButtons[n];
-    btn->SetLabel(strText);
+    btn->set_text(strText);
+    update_btns_width();
+    UpdateSearchSizeAndPosition();
+}
+
+void TopBarItemsCtrl::set_page_closable(size_t n, bool closable)
+{
+    if (n >= m_pageButtons.size())
+        return;
+    m_pageButtons[n]->set_closable(closable);
     update_btns_width();
     UpdateSearchSizeAndPosition();
 }

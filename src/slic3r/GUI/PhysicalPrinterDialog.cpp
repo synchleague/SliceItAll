@@ -5,6 +5,7 @@
 #include "PhysicalPrinterDialog.hpp"
 #include "PresetComboBoxes.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <vector>
 #include <string>
@@ -357,6 +358,8 @@ void PhysicalPrinterDialog::update_printers()
     wxBusyCursor wait;
 
     std::unique_ptr<PrintHost> host(PrintHost::get_print_host(m_config));
+    if (!host)
+        return;
 
     wxArrayString printers;
     Field *rs = m_optgroup->get_field("printhost_port");
@@ -619,17 +622,57 @@ void PhysicalPrinterDialog::build_printhost_settings(ConfigOptionsGroup* m_optgr
 void PhysicalPrinterDialog::update_printhost_buttons()
 {
     std::unique_ptr<PrintHost> host(PrintHost::get_print_host(m_config));
-    m_printhost_test_btn->Enable(!m_config->opt_string("print_host").empty() && host->can_test());
-    m_printhost_browse_btn->Enable(host->has_auto_discovery());
+    const bool usable = host != nullptr;
+    m_printhost_test_btn->Enable(usable && !m_config->opt_string("print_host").empty() && host->can_test());
+    m_printhost_browse_btn->Enable(usable && host->has_auto_discovery());
+    if (!usable) {
+        m_printhost_test_btn->Hide();
+        m_printhost_browse_btn->Hide();
+    }
 }
 
 void PhysicalPrinterDialog::update(bool printer_change)
 {
+    const PrinterTechnology tech = Preset::printer_technology(*m_config);
+    bool connectable = tech != ptSLA;
+    if (tech == ptSLA && wxGetApp().preset_bundle && !m_presets.empty()) {
+        connectable = false;
+        for (PresetForPrinter* item : m_presets) {
+            Preset* preset = wxGetApp().preset_bundle->printers.find_preset(item->get_preset_name(), false);
+            if (!preset)
+                continue;
+            const PresetWithVendorProfile with_vendor = wxGetApp().preset_bundle->printers.get_preset_with_vendor_profile(*preset);
+            const std::string vendor_name = with_vendor.vendor ? with_vendor.vendor->name : std::string();
+            if (printer_can_connect(tech, vendor_name))
+                connectable = true;
+        }
+    }
+    if (!connectable && !PhysicalPrinter::has_print_host_information(*m_config)) {
+        const auto* type = m_config->option<ConfigOptionEnum<PrintHostType>>("host_type");
+        if (!type || type->value == htPrusaLink || type->value == htOctoPrint)
+            m_config->set_key_value("host_type", new ConfigOptionEnum<PrintHostType>(htOffline));
+    }
+
     m_optgroup->reload_config();
 
-    const PrinterTechnology tech = Preset::printer_technology(*m_config);
-    // Only offer the host type selection for FFF, for SLA it's always the SL1 printer (at the moment)
+    // FFF printers pick a host. A resin printer that cannot be contacted stays offline.
     bool supports_multiple_printers = false;
+    if (const auto* host_now = m_config->option<ConfigOptionEnum<PrintHostType>>("host_type");
+        host_now && host_now->value == htOffline) {
+        m_optgroup->show_field("host_type");
+        for (const char* key : { "print_host", "printhost_authorization_type", "printhost_apikey", "printhost_user", "printhost_password", "printhost_port", "printhost_cafile", "printhost_ssl_ignore_revoke" })
+            m_optgroup->hide_field(key);
+        m_printhost_browse_btn->Hide();
+        m_printhost_test_btn->Hide();
+        m_printhost_port_browse_btn->Hide();
+        m_last_host_type = htOffline;
+        this->Fit();
+        this->Layout();
+#ifdef __WXMSW__
+        this->Refresh();
+#endif
+        return;
+    }
     if (tech == ptFFF) {
         update_host_type(printer_change);
         const auto opt = m_config->option<ConfigOptionEnum<PrintHostType>>("host_type");
@@ -643,7 +686,7 @@ void PhysicalPrinterDialog::update(bool printer_change)
                 m_optgroup->show_field(opt_key, auth_type == AuthorizationType::atUserPassword); 
         } else {
             m_optgroup->hide_field("printhost_authorization_type");
-            m_optgroup->show_field("printhost_apikey", true);
+            m_optgroup->show_field("printhost_apikey", opt->value != htAnycubic);
             for (const std::string& opt_key : std::vector<std::string>{ "printhost_user", "printhost_password" })
                 m_optgroup->hide_field(opt_key);
             supports_multiple_printers = opt && opt->value == htRepetier;
@@ -806,15 +849,22 @@ void PhysicalPrinterDialog::update_host_type(bool printer_change)
 
     Choice* choice = dynamic_cast<Choice*>(ht);
     choice->set_values(types);
-    int index_in_choice = (printer_change ? std::clamp(last_in_conf - ((int)ht->m_opt.enum_def->values().size() - (int)types.size()), 0, (int)ht->m_opt.enum_def->values().size() - 1) : last_in_conf);
+    const int value_count = (int)ht->m_opt.enum_def->values().size();
+    const int shown_count = (int)types.size();
+    const int hidden_prefix = std::max(0, value_count - shown_count);
+    int index_in_choice = 0;
+    if (!printer_change)
+        index_in_choice = std::clamp(last_in_conf, 0, std::max(0, shown_count - 1));
+    else if (const auto mapped = ht->m_opt.enum_def->enum_to_index(last_in_conf))
+        index_in_choice = std::clamp(*mapped - hidden_prefix, 0, std::max(0, shown_count - 1));
     choice->set_value(index_in_choice);
     if (link.supported && link.label == _(ht->m_opt.enum_def->label(index_in_choice)))
         m_config->set_key_value("host_type", new ConfigOptionEnum<PrintHostType>(htPrusaLink));
     else if (connect.supported && connect.label == _(ht->m_opt.enum_def->label(index_in_choice)))
         m_config->set_key_value("host_type", new ConfigOptionEnum<PrintHostType>(htPrusaConnect));
     else {
-        int host_type = std::clamp(index_in_choice + ((int)ht->m_opt.enum_def->values().size() - (int)types.size()), 0, (int)ht->m_opt.enum_def->values().size() - 1);
-        PrintHostType type = static_cast<PrintHostType>(host_type);
+        const int def_index = std::clamp(index_in_choice + hidden_prefix, 0, std::max(0, value_count - 1));
+        const PrintHostType type = static_cast<PrintHostType>(ht->m_opt.enum_def->index_to_enum(def_index));
         m_config->set_key_value("host_type", new ConfigOptionEnum<PrintHostType>(type));
     }
 }

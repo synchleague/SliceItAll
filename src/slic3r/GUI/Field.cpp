@@ -132,12 +132,15 @@ void Field::PostInitialize()
 	if (getWindow())
 		getWindow()->Bind(wxEVT_KEY_UP, [](wxKeyEvent& evt) {
 		    if ((evt.GetModifiers() & wxMOD_CONTROL) != 0) {
-			    int tab_id = -1;
 			    switch (evt.GetKeyCode()) {
-			    case '1': { tab_id = 0; break; }
-			    case '2': { tab_id = 1; break; }
-				case '3': { tab_id = 2; break; }
-				case '4': { tab_id = 3; break; }
+			    case '1': { wxGetApp().mainframe->select_tab(size_t(0)); break; }
+			    case '2': { wxGetApp().mainframe->select_models_tab(); break; }
+				case '3': { wxGetApp().mainframe->select_devices_tab(); break; }
+				case '4': {
+                    wxGetApp().mainframe->select_tab(size_t(0));
+                    wxGetApp().sidebar().focus_print_settings();
+                    break;
+                }
 #ifdef __APPLE__
 				case 'f':
 #else /* __APPLE__ */
@@ -146,9 +149,7 @@ void Field::PostInitialize()
 				case 'F': { wxGetApp().show_search_dialog(); break; }
 			    default: break;
 			    }
-			    if (tab_id >= 0)
-					wxGetApp().mainframe->select_tab(tab_id);
-				if (tab_id > 0)
+				if (evt.GetKeyCode() >= '2' && evt.GetKeyCode() <= '4')
 					// tab panel should be focused for correct navigation between tabs
 				    wxGetApp().tab_panel()->SetFocus();
 		    }
@@ -1539,8 +1540,8 @@ void PointCtrl::BUILD()
 	if (!wxOSX) y_textctrl->SetBackgroundStyle(wxBG_STYLE_PAINT);
 
     wxSize label_sz = wxSize(int(field_size.x / 2), field_size.y);
-	auto static_text_x = new wxStaticText(m_parent, wxID_ANY, "x : ", wxDefaultPosition, label_sz, wxALIGN_RIGHT);
-    auto static_text_y = new wxStaticText(m_parent, wxID_ANY, "y : ", wxDefaultPosition, label_sz, wxALIGN_RIGHT);
+	auto static_text_x = new wxStaticText(m_parent, wxID_ANY, "x", wxDefaultPosition, label_sz, wxALIGN_LEFT);
+    auto static_text_y = new wxStaticText(m_parent, wxID_ANY, "y", wxDefaultPosition, label_sz, wxALIGN_LEFT);
 	static_text_x->SetFont(Slic3r::GUI::wxGetApp().normal_font());
 	static_text_x->SetBackgroundStyle(wxBG_STYLE_PAINT);
 	static_text_y->SetFont(Slic3r::GUI::wxGetApp().normal_font());

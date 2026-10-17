@@ -1540,6 +1540,46 @@ std::vector<size_t> ModelVolume::get_extruders_from_multi_material_painting() co
     return extruders;
 }
 
+void ModelInstance::ensure_assemble_centered()
+{
+    if (m_assemble_initialized || object == nullptr)
+        return;
+
+    size_t idx = 0;
+    for (; idx < object->instances.size(); ++idx)
+        if (object->instances[idx] == this)
+            break;
+    if (idx >= object->instances.size())
+        return;
+
+    const BoundingBoxf3 bbox = object->instance_bounding_box(idx);
+    m_assemble_transformation = m_transformation;
+    if (bbox.defined)
+        m_assemble_transformation.set_offset(m_transformation.get_offset() - bbox.center());
+    m_assemble_initialized = true;
+}
+
+void ModelInstance::set_assemble_offset(const Vec3d& offset)
+{
+    m_assemble_initialized = true;
+    m_assemble_transformation.set_offset(offset);
+}
+
+void ModelInstance::set_assemble_rotation(const Vec3d& rotation)
+{
+    m_assemble_initialized = true;
+    m_assemble_transformation.set_rotation(rotation);
+}
+
+Geometry::Transformation ModelInstance::get_assemble_view_transformation() const
+{
+    Geometry::Transformation trafo = m_assemble_initialized ? m_assemble_transformation : m_transformation;
+    const Vec3d mirror = m_transformation.get_mirror();
+    trafo.set_scaling_factor(m_transformation.get_scaling_factor());
+    trafo.set_mirror(mirror);
+    return trafo;
+}
+
 void ModelInstance::transform_mesh(TriangleMesh* mesh, bool dont_translate) const
 {
     mesh->transform(dont_translate ? get_matrix_no_offset() : get_matrix());

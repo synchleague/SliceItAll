@@ -32,7 +32,8 @@ enum ItemType {
     itSettings      = 16,
     itLayerRoot     = 32,
     itLayer         = 64,
-    itInfo          = 128
+    itInfo          = 128,
+    itPlate         = 256
 };
 
 enum ColumnNumber
@@ -78,6 +79,7 @@ class ObjectDataViewModelNode
     wxBitmapBundle&                 m_bmp = m_empty_bmp;
     ItemType				        m_type;
     int                             m_idx = -1;
+    int                             m_plate_bed { 0 };
     bool					        m_container = false;
     wxString				        m_extruder = "default";
     wxBitmapBundle                  m_extruder_bmp;
@@ -120,6 +122,7 @@ public:
 
     ObjectDataViewModelNode(ObjectDataViewModelNode* parent, const ItemType type);
     ObjectDataViewModelNode(ObjectDataViewModelNode* parent, const InfoItemType type);
+    ObjectDataViewModelNode(const wxString& plate_name, int bed_idx);
 
     ~ObjectDataViewModelNode()
     {
@@ -271,6 +274,8 @@ wxDECLARE_EVENT(wxCUSTOMEVT_LAST_VOLUME_IS_DELETED, wxCommandEvent);
 class ObjectDataViewModel :public wxDataViewModel
 {
     std::vector<ObjectDataViewModelNode*>       m_objects;
+    std::vector<ObjectDataViewModelNode*>       m_plate_nodes;
+    bool                                        m_grouped { false };
     std::vector<wxBitmapBundle*>                m_volume_bmps;
     std::vector<wxBitmapBundle *>               m_text_volume_bmps;
     std::vector<wxBitmapBundle *>               m_svg_volume_bmps;
@@ -282,9 +287,17 @@ class ObjectDataViewModel :public wxDataViewModel
 
     wxDataViewCtrl*                             m_ctrl { nullptr };
 
+    wxDataViewItem plate_item(const ObjectDataViewModelNode* object) const;
+    void           clear_plate_nodes();
+
 public:
     ObjectDataViewModel();
     ~ObjectDataViewModel();
+
+    // Group root objects under build-plate rows when more than one plate is in use.
+    // beds[i] is the plate of m_objects[i]. Returns true when the control was rebuilt.
+    bool set_plate_groups(const std::vector<int>& beds, int bed_count);
+    int  GetPlateIndex(const wxDataViewItem& item) const;
 
     wxDataViewItem AddObject( const wxString &name,
                         const wxString& extruder,
@@ -366,6 +379,7 @@ public:
     wxDataViewItem  ReorganizeObjects( int current_id, int new_id);
 
     bool    IsEnabled(const wxDataViewItem &item, unsigned int col) const override;
+    bool    GetAttr(const wxDataViewItem &item, unsigned int col, wxDataViewItemAttr &attr) const override;
 
     wxDataViewItem  GetParent(const wxDataViewItem &item) const override;
     // get object item

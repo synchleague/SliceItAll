@@ -208,7 +208,7 @@ public:
     bool is_editor() const { return m_app_mode == EAppMode::Editor; }
     bool is_gcode_viewer() const { return m_app_mode == EAppMode::GCodeViewer; }
     bool is_recreating_gui() const { return m_is_recreating_gui; }
-    std::string logo_name() const { return is_editor() ? "PrusaSlicer" : "PrusaSlicer-gcodeviewer"; }
+    std::string logo_name() const { return "SliceItAll"; }
 
     Search::OptionsSearcher& searcher() noexcept { return *m_searcher; }
     void                     set_searcher(Search::OptionsSearcher* searcher) { m_searcher = searcher; }
@@ -282,6 +282,8 @@ public:
     int             em_unit() const         { return m_em_unit; }
     bool            suppress_round_corners() const;
     wxSize          get_min_size(wxWindow* display_win) const;
+    // About twice the minimum, kept inside the display work area.
+    wxSize          get_startup_size(wxWindow* display_win) const;
     int             get_max_font_pt_size();
     float           toolbar_icon_scale(bool& is_custom) const;
     void            set_auto_toolbar_icon_scale(float scale) const;

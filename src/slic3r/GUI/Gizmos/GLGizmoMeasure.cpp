@@ -1822,26 +1822,11 @@ void GLGizmoMeasure::on_render_input_window(float x, float y, float bottom_limit
     static EMode last_mode = EMode::FeatureSelection;
     static SelectedFeatures last_selected_features;
 
-    static float last_y = 0.0f;
-    static float last_h = 0.0f;
-
     if (m_editing_distance)
         return;
 
-    ImGuiPureWrap::begin(get_name(), ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
-
-    // adjust window position to avoid overlap the view toolbar
-    const float win_h = ImGui::GetWindowHeight();
-    y = std::min(y, bottom_limit - win_h);
-    ImGui::SetWindowPos(ImVec2(x, y), ImGuiCond_Always);
-    if (last_h != win_h || last_y != y) {
-        // ask canvas for another frame to render the window in the correct position
-        m_imgui->set_requires_extra_frame();
-        if (last_h != win_h)
-            last_h = win_h;
-        if (last_y != y)
-            last_y = y;
-    }
+    ImGuiPureWrap::begin(get_name(), ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+    GLGizmoBase::place_input_window(get_name(), x, y, bottom_limit);
 
     if (ImGui::BeginTable("Commands", 2)) {
         unsigned int row_count = 1;

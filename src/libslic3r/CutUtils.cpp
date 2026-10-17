@@ -107,7 +107,9 @@ static void process_connector_cut(  ModelVolume* volume, const Transform3d& inst
 
     // ! Don't apply instance transformation for the conntectors.
     // This transformation is already there
-    if (volume->cut_info.connector_type != CutConnectorType::Dowel) {
+    const bool holes_in_both = volume->cut_info.connector_type == CutConnectorType::Dowel
+        || volume->cut_info.connector_type == CutConnectorType::Hole;
+    if (!holes_in_both) {
         if (attributes.has(ModelObjectCutAttribute::KeepUpper)) {
             ModelVolume* vol = nullptr;
             if (volume->cut_info.connector_type == CutConnectorType::Snap) {
@@ -134,7 +136,8 @@ static void process_connector_cut(  ModelVolume* volume, const Transform3d& inst
         }
     }
     else {
-        if (attributes.has(ModelObjectCutAttribute::CreateDowels)) {
+        if (volume->cut_info.connector_type == CutConnectorType::Dowel &&
+            attributes.has(ModelObjectCutAttribute::CreateDowels)) {
             ModelObject* dowel{ nullptr };
             // Clone the object to duplicate instances, materials etc.
             volume->get_object()->clone_for_cut(&dowel);

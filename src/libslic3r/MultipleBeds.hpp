@@ -59,6 +59,14 @@ public:
 
 	int    get_number_of_beds() const   { return m_number_of_beds; }
 	bool   should_show_next_bed() const { return m_show_next_bed; }
+	// Keeps an empty plate the user added, until objects occupy a higher one.
+	bool   add_bed();
+	// Drops one plate and slides later plates down. The caller moves or deletes instances first.
+	bool   remove_bed(int bed);
+	// One unlocked plate, no instance-to-bed assignments. Used when the printer changes.
+	void   reset_to_first_bed();
+	bool   is_bed_locked(int bed) const;
+	void   set_bed_locked(int bed, bool locked);
 
 	void   request_next_bed(bool show);
 	int    get_active_bed() const       { return m_active_bed; }
@@ -103,6 +111,8 @@ private:
 	bool   is_instance_on_bed(const ObjectID id, const int bed_index) const;
 
 	int m_number_of_beds = 1;
+	int m_minimum_beds   = 1;
+	std::array<bool, MAX_NUMBER_OF_BEDS> m_bed_locked{};
 	int m_active_bed     = 0;
 	int m_bed_for_thumbnails_generation = -1;
 	bool m_show_next_bed = false;

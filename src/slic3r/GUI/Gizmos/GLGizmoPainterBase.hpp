@@ -144,6 +144,12 @@ protected:
         HEIGHT_RANGE
     };
 
+public:
+    void use_brush_tool() { m_tool_type = ToolType::BRUSH; }
+    void use_height_range_tool() { m_tool_type = ToolType::HEIGHT_RANGE; }
+
+protected:
+
     struct ProjectedMousePosition
     {
         Vec3f  mesh_hit;

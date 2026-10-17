@@ -323,7 +323,7 @@ struct GLGizmoEmboss::Facenames: public ::Facenames{};
 struct GLGizmoEmboss::GuiCfg: public ::GuiCfg{};
 
 GLGizmoEmboss::GLGizmoEmboss(GLCanvas3D &parent)
-    : GLGizmoBase(parent, M_ICON_FILENAME, -2)
+    : GLGizmoBase(parent, M_ICON_FILENAME, 12)
     , m_gui_cfg(nullptr)
     , m_style_manager(m_imgui->get_glyph_ranges(), create_default_styles)
     , m_face_names(std::make_unique<Facenames>())
@@ -4016,4 +4016,4 @@ GuiCfg create_gui_configuration()
 } // namespace
 
 // any existing icon filename to not influence GUI
-const std::string GLGizmoEmboss::M_ICON_FILENAME = "cut.svg";
+const std::string GLGizmoEmboss::M_ICON_FILENAME = "add_text_part.svg";

@@ -9,12 +9,15 @@ class TopBarMenus;
 
 // custom message the TopBarItemsCtrl sends to its parent (TopBar) to notify a selection change:
 wxDECLARE_EVENT(wxCUSTOMEVT_TOPBAR_SEL_CHANGED, wxCommandEvent);
+// Close was clicked on a page button. The event id is the page index.
+wxDECLARE_EVENT(wxCUSTOMEVT_TOPBAR_PAGE_CLOSE, wxCommandEvent);
 
 class TopBarItemsCtrl : public wxControl
 {
     class Button : public wxPanel
     {
         bool        m_is_selected{ false };
+        bool        m_is_tab{ false };
         wxColour    m_background_color;
         wxColour    m_foreground_color;
         wxBitmapBundle  m_bmp_bundle = wxBitmapBundle();
@@ -24,6 +27,7 @@ class TopBarItemsCtrl : public wxControl
         std::string m_icon_name;
         int         m_px_cnt            { 16 };
         bool        m_has_down_arrow    { false };
+        bool        m_closable          { false };
         wxBitmapBundle  m_dd_bmp_bundle = wxBitmapBundle();
 
     public:
@@ -38,6 +42,9 @@ class TopBarItemsCtrl : public wxControl
 
         void set_selected(bool selected);
         void set_hovered (bool hovered);
+        void use_tab_style();
+        void set_closable(bool closable);
+        void set_text(const wxString& label);
         void render();
 
         void sys_color_changed();
@@ -93,6 +100,8 @@ public:
     void RemovePage(size_t n);
     void SetPageText(size_t n, const wxString& strText);
     wxString GetPageText(size_t n) const;
+    void set_page_closable(size_t n, bool closable);
+    void set_window_menus(wxMenu* file_menu, wxMenu* app_menu);
 
     void UpdateAccountButton(bool avatar = false);
     void UnselectPopupButtons();
@@ -111,6 +120,11 @@ private:
     wxFlexGridSizer*                m_buttons_sizer;
     wxFlexGridSizer*                m_sizer;
     ButtonWithPopup*                m_menu_btn      {nullptr};
+    ButtonWithPopup*                m_file_btn      {nullptr};
+    ButtonWithPopup*                m_app_btn       {nullptr};
+    wxMenu*                         m_file_menu     {nullptr};
+    wxMenu*                         m_app_menu      {nullptr};
+    wxBoxSizer*                     m_left_sizer    {nullptr};
     ButtonWithPopup*                m_workspace_btn {nullptr};
     ButtonWithPopup*                m_account_btn   {nullptr};
     Button*                         m_settings_btn  {nullptr};
@@ -183,6 +197,12 @@ public:
         return true;
     }
 
+    void set_window_menus(wxMenu* file_menu, wxMenu* app_menu)
+    {
+        if (auto* bar = dynamic_cast<TopBarItemsCtrl*>(m_bookctrl))
+            bar->set_window_menus(file_menu, app_menu);
+    }
+
 
     // Methods specific to this class.
 
@@ -245,8 +265,16 @@ public:
 
         if (bSelect)
             SetSelection(n);
-        else
+        else {
             page->Hide();
+            // wxBookCtrlBase::InsertPage leaves the selection index where it was,
+            // so inserting at or before the current page points that index at the
+            // new hidden page while the previous page stays on screen.
+            if (m_selection != wxNOT_FOUND && int(n) <= m_selection)
+                ++m_selection;
+            if (m_selection != wxNOT_FOUND && m_selection >= int(GetPageCount()))
+                m_selection = wxNOT_FOUND;
+        }
 
         return true;
     }
@@ -490,12 +518,18 @@ protected:
 
     virtual wxWindow * DoRemovePage(size_t page) override
     {
+        const int previous = m_selection;
         wxWindow* const win = wxBookCtrlBase::DoRemovePage(page);
         if (win)
-        {
             GetTopBarItemsCtrl()->RemovePage(page);
-            // Don't setect any page after deletion some of them
-            // DoSetSelectionAfterRemoval(page);
+
+        // Do not select another page here. The index still has to stay inside
+        // the pages that remain, or the next SetSelection hides a missing page.
+        if (previous != wxNOT_FOUND) {
+            if (GetPageCount() == 0 || int(page) == previous)
+                m_selection = wxNOT_FOUND;
+            else if (int(page) < previous)
+                m_selection = previous - 1;
         }
 
         return win;

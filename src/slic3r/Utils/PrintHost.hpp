@@ -9,6 +9,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 #include <functional>
 #include <boost/filesystem/path.hpp>
 
@@ -89,6 +90,8 @@ struct PrintHostJob
     PrintHostUpload upload_data;
     std::unique_ptr<PrintHost> printhost;
     bool cancelled = false;
+    // Project tool index (0-based, the T number) -> rack slot or extruder.
+    std::vector<int> filament_slot_map;
 
     PrintHostJob() {}
     PrintHostJob(const PrintHostJob&) = delete;
@@ -96,6 +99,7 @@ struct PrintHostJob
         : upload_data(std::move(other.upload_data))
         , printhost(std::move(other.printhost))
         , cancelled(other.cancelled)
+        , filament_slot_map(std::move(other.filament_slot_map))
     {}
 
     PrintHostJob(DynamicPrintConfig *config)
@@ -108,6 +112,7 @@ struct PrintHostJob
         upload_data = std::move(other.upload_data);
         printhost = std::move(other.printhost);
         cancelled = other.cancelled;
+        filament_slot_map = std::move(other.filament_slot_map);
         return *this;
     }
 

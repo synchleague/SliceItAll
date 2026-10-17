@@ -111,7 +111,7 @@ void MsgDialog::apply_style(long style)
 
     std::string icon_name = style & wxICON_WARNING        ? "exclamation" :
                             style & wxICON_INFORMATION    ? "info"        :
-                            style & wxICON_QUESTION       ? "question"    : "PrusaSlicer";
+                            style & wxICON_QUESTION       ? "question"    : "SliceItAll";
     logo->SetBitmap(*get_bmp_bundle(icon_name, 64));
 }
 
@@ -228,7 +228,7 @@ void ErrorDialog::create(const HtmlContent& content, int icon_width)
     add_msg_content(this, content_sizer, content);
 
     // Use a small bitmap with monospaced font, as the error text will not be wrapped.
-    logo->SetBitmap(*get_bmp_bundle("PrusaSlicer_192px_grayscale.png", icon_width));
+    logo->SetBitmap(*get_bmp_bundle("SliceItAll.png", icon_width));
 
     SetMaxSize(wxSize(-1, CONTENT_MAX_HEIGHT*wxGetApp().em_unit()));
 
@@ -341,6 +341,17 @@ InfoDialog::InfoDialog(wxWindow* parent, const wxString &title, const wxString& 
 {
     add_msg_content(this, content_sizer, HtmlContent{ msg, false, is_marked_msg });
     finalize();
+}
+
+void InfoDialog::show_dont_show_again(const wxString& label)
+{
+    if (m_dont_show)
+        return;
+    m_dont_show = new wxCheckBox(this, wxID_ANY, label);
+    wxGetApp().UpdateDarkUI(m_dont_show);
+    btn_sizer->Insert(0, m_dont_show, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, HORIZ_SPACING);
+    Layout();
+    Fit();
 }
 
 wxString get_wraped_wxString(const wxString& in, size_t line_len /*=80*/)

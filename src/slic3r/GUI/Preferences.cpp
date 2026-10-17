@@ -191,7 +191,7 @@ static std::shared_ptr<ConfigOptionsGroup>create_options_tab(const wxString& tit
 
 static void activate_options_tab(std::shared_ptr<ConfigOptionsGroup> optgroup)
 {
-	optgroup->activate([](){}, wxALIGN_RIGHT);
+	optgroup->activate([](){}, wxALIGN_LEFT);
 	optgroup->update_visibility(comSimple);
 	wxBoxSizer* sizer = static_cast<wxBoxSizer*>(static_cast<wxPanel*>(optgroup->parent())->GetSizer());
 	sizer->Add(optgroup->sizer, 0, wxEXPAND | wxALL, 10);
@@ -315,6 +315,29 @@ void PreferencesDialog::build()
 				"Examples of such issues are floating object parts, unsupported extrusions and low bed adhesion."),
 			app_config->get_bool("alert_when_supports_needed"));
 
+		m_optgroup_general->append_separator();
+
+		append_bool_option(m_optgroup_general, "sidebar_on_right",
+			L("Sidebar on the right"),
+			L("Place the settings sidebar on the right side of the 3D view."),
+			app_config->get_bool("sidebar_on_right"));
+
+		append_bool_option(m_optgroup_general, "sidebar_split",
+			L("Split models and settings"),
+			L("Show the model list and the settings beside each other, one on each side of the 3D view."),
+			app_config->get_bool("sidebar_split"));
+
+		append_bool_option(m_optgroup_general, "models_on_left",
+			L("Models on the left when split"),
+			L("With the split layout, the model list is on the left and settings are on the right."),
+			!app_config->has("models_on_left") || app_config->get_bool("models_on_left"));
+
+		m_optgroup_general->append_separator();
+
+		append_bool_option(m_optgroup_general, "dashboard_site",
+			L("Share the device dashboard on the home network"),
+			L("Hosts the Devices dashboard as a private page on this computer. Other devices on the home network can open it. From outside the house, use a VPN into this network."),
+			app_config->get_bool("dashboard_site"));
 
 		m_optgroup_general->append_separator();
 
@@ -670,8 +693,8 @@ void PreferencesDialog::build()
 	}
 
 #ifdef _WIN32
-		// Add "Dark Mode" tab
-		m_optgroup_dark_mode = create_options_tab(_L("Dark mode"), tabs);
+		// System menu only. Dark mode is always on.
+		m_optgroup_dark_mode = create_options_tab(_L("System"), tabs);
 		m_optgroup_dark_mode->on_change = [this](t_config_option_key opt_key, boost::any value) {
 			if (auto it = m_values.find(opt_key); it != m_values.end()) {
 				m_values.erase(it); // we shouldn't change value, if some of those parameters were selected, and then deselected
@@ -679,11 +702,6 @@ void PreferencesDialog::build()
 			}
 			m_values[opt_key] = boost::any_cast<bool>(value) ? "1" : "0";
 		};
-
-		append_bool_option(m_optgroup_dark_mode, "dark_color_mode",
-			L("Enable dark mode"),
-			L("If enabled, UI will use Dark mode colors. If disabled, old UI will be used."),
-			app_config->get_bool("dark_color_mode"));
 
 		if (wxPlatformInfo::Get().GetOSMajorVersion() >= 10) // Use system menu just for Window newer then Windows 10
 															 // Use menu with ownerdrawn items by default on systems older then Windows 10

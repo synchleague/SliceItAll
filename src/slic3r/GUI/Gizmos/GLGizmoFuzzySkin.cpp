@@ -72,12 +72,8 @@ void GLGizmoFuzzySkin::on_render_input_window(float x, float y, float bottom_lim
     if (!m_c->selection_info()->model_object())
         return;
 
-    const float approx_height = m_imgui->scaled(22.f);
-
-    y = std::min(y, bottom_limit - approx_height);
-    ImGuiPureWrap::set_next_window_pos(x, y, ImGuiCond_Always);
-
-    ImGuiPureWrap::begin(get_name(), ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+    ImGuiPureWrap::begin(get_name(), ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+    GLGizmoBase::place_input_window(get_name(), x, y, bottom_limit);
 
     // First calculate width of all the texts that are could possibly be shown. We will decide set the dialog width based on that:
     const float clipping_slider_left   = std::max(ImGuiPureWrap::calc_text_size(m_desc.at("clipping_of_view")).x,

@@ -15,6 +15,8 @@
 #include <boost/nowide/convert.hpp>
 #include <boost/nowide/cstdio.hpp>
 #include <boost/property_tree/ini_parser.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <sstream>
 #include <curl/curl.h>
 
 #include "slic3r/GUI/format.hpp"
@@ -136,6 +138,8 @@ struct AppUpdater::priv {
 #endif
 	// parses ini tree of version file, saves to m_online_version_data and queue event(s) to UI
 	void parse_version_string(const std::string& body);
+	// GitHub /repos/{owner}/{repo}/releases/latest
+	void parse_github_release(const std::string& body);
 	// thread
 	std::thread				m_thread;
 	std::atomic_bool        m_cancel;
@@ -335,13 +339,16 @@ void AppUpdater::priv::version_check(const std::string& version_check_url)
 {
 	assert(!version_check_url.empty());
 	std::string error_message;
-	bool res = http_get_file(version_check_url, 1024
+	bool res = http_get_file(version_check_url, 512 * 1024
 		// on_progress
 		, [](Http::Progress progress) { return true; }
 		// on_complete
 		, [&](std::string body, std::string& error_message) {
 			boost::trim(body);
-			parse_version_string(body);
+			if (!body.empty() && body.front() == '{')
+				parse_github_release(body);
+			else
+				parse_version_string(body);
 			return true;
 		}
 		, error_message
@@ -354,6 +361,55 @@ void AppUpdater::priv::version_check(const std::string& version_check_url)
 			evt->SetString(message);
 			GUI::wxGetApp().QueueEvent(evt);
 		}
+	}
+}
+
+void AppUpdater::priv::parse_github_release(const std::string& body)
+{
+	auto report_failure = []() {
+		if (wxApp::GetInstance() == nullptr)
+			return;
+		wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
+		evt->SetString(GUI::from_u8(Semver().to_string()));
+		GUI::wxGetApp().QueueEvent(evt);
+	};
+
+	try {
+		std::stringstream ss(body);
+		boost::property_tree::ptree tree;
+		boost::property_tree::read_json(ss, tree);
+
+		std::string tag = tree.get<std::string>("tag_name", "");
+		std::string url = tree.get<std::string>("html_url", "");
+		if (!tag.empty() && (tag.front() == 'v' || tag.front() == 'V'))
+			tag.erase(0, 1);
+		const std::string version_prefix = "version_";
+		if (tag.compare(0, version_prefix.size(), version_prefix) == 0)
+			tag.erase(0, version_prefix.size());
+
+		boost::optional<Semver> release_version = Semver::parse(tag);
+		if (!release_version || url.empty()) {
+			BOOST_LOG_TRIVIAL(error) << "GitHub release response did not contain a usable version.";
+			report_failure();
+			return;
+		}
+
+		DownloadAppData new_data;
+		new_data.version = release_version;
+		new_data.url = url;
+		new_data.action = AppUpdaterURLAction::AUUA_OPEN_IN_BROWSER;
+		new_data.target_path = m_default_dest_folder / "SliceItAll";
+		set_app_data(new_data);
+
+		BOOST_LOG_TRIVIAL(info) << format("Got %1% online version: `%2%`. Sending to GUI thread...", SLIC3R_APP_NAME, release_version->to_string());
+		if (wxApp::GetInstance() != nullptr) {
+			wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
+			evt->SetString(GUI::from_u8(release_version->to_string()));
+			GUI::wxGetApp().QueueEvent(evt);
+		}
+	} catch (const std::exception& ex) {
+		BOOST_LOG_TRIVIAL(error) << "Failed to read GitHub release: " << ex.what();
+		report_failure();
 	}
 }
 

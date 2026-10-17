@@ -82,7 +82,7 @@ void ProjectDirtyStateManager::render_debug_window() const
     ImGuiWrapper& imgui = *wxGetApp().imgui();
 
     auto color = [](bool value) {
-        return value ? ImVec4(1.0f, 0.49f, 0.216f, 1.0f) /* orange */: ImVec4(1.0f, 1.0f, 1.0f, 1.0f) /* white */;
+        return value ? ImVec4(0.996f, 0.196f, 0.678f, 1.0f) : ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     };
     auto bool_to_text = [](bool value) {
         return value ? "true" : "false";

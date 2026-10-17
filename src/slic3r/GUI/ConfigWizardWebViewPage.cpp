@@ -41,7 +41,7 @@ ConfigWizardWebViewPage::ConfigWizardWebViewPage(ConfigWizard *parent)
         m_text = new wxStaticText(this, wxID_ANY, format_wxstr(_L("You are logged as %1%."), p_user_account->get_username()));       
     } else {
         // TRN Config wizard page with a log in web. first line of text.
-        m_text = new wxStaticText(this, wxID_ANY, _L("Log in to control your printers remotely through the built-in Connect in PrusaSlicer."));
+        m_text = new wxStaticText(this, wxID_ANY, _L("Log in to control your printers remotely."));
         // TRN Config wizard page with a log in web. second line of text.
     }
     append(m_text);
@@ -68,7 +68,7 @@ bool ConfigWizardWebViewPage::login_changed()
         m_text->SetLabel(format_wxstr(_L("You are logged as %1%."), p_user_account->get_username()));
     } else {
         // TRN Config wizard page with a log in web. first line of text.
-        m_text->SetLabel(_L("Log in to control your printers remotely through the built-in Connect in PrusaSlicer."));
+        m_text->SetLabel(_L("Log in to control your printers remotely."));
     }
     return logged;
 }

@@ -7,6 +7,8 @@
 
 #include "Job.hpp"
 
+#include <vector>
+
 #include "libslic3r/SLA/Rotfinder.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "slic3r/GUI/I18N.hpp"
@@ -37,7 +39,11 @@ class RotoptimizeJob : public Job
             L("Rotate the model to have the lowest z height for faster print time.")}};
 
     size_t m_method_id = 0;
+    int    m_method_override = -1;
     float  m_accuracy  = 0.75;
+    bool   m_use_explicit_selection = false;
+    std::vector<size_t> m_explicit_objects;
+    std::vector<size_t> m_limit_instance_ids;
 
     DynamicPrintConfig m_default_print_cfg;
 
@@ -57,6 +63,8 @@ public:
     void process(Ctl &ctl) override;
 
     RotoptimizeJob();
+    // object_ids are model object indices. instance_ids limits which copies are rotated.
+    RotoptimizeJob(std::vector<size_t> object_ids, std::vector<size_t> instance_ids, int method_id);
 
     void finalize(bool canceled, std::exception_ptr &) override;
 

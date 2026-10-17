@@ -284,6 +284,7 @@ enum class CutConnectorType : int {
     , Dowel
     , Snap
     , Undef
+    , Hole
 };
 
 enum class CutConnectorStyle : int {
@@ -338,20 +339,22 @@ struct CutConnector
     float height_tolerance;// [0.f : 1.f]
     float z_angle {0.f};
     CutConnectorAttributes attribs;
+    // Full second side of a square pin, in mm. 0 keeps that side equal to the diameter.
+    float width{ 0.f };
 
     CutConnector()
         : pos(Vec3d::Zero()), rotation_m(Transform3d::Identity()), radius(5.f), height(10.f), radius_tolerance(0.f), height_tolerance(0.1f), z_angle(0.f)
     {}
 
-    CutConnector(Vec3d p, Transform3d rot, float r, float h, float rt, float ht, float za, CutConnectorAttributes attributes)
-        : pos(p), rotation_m(rot), radius(r), height(h), radius_tolerance(rt), height_tolerance(ht), z_angle(za), attribs(attributes)
+    CutConnector(Vec3d p, Transform3d rot, float r, float h, float rt, float ht, float za, CutConnectorAttributes attributes, float w = 0.f)
+        : pos(p), rotation_m(rot), radius(r), height(h), radius_tolerance(rt), height_tolerance(ht), z_angle(za), attribs(attributes), width(w)
     {}
 
     CutConnector(const CutConnector& rhs) :
-        CutConnector(rhs.pos, rhs.rotation_m, rhs.radius, rhs.height, rhs.radius_tolerance, rhs.height_tolerance, rhs.z_angle, rhs.attribs) {}
+        CutConnector(rhs.pos, rhs.rotation_m, rhs.radius, rhs.height, rhs.radius_tolerance, rhs.height_tolerance, rhs.z_angle, rhs.attribs, rhs.width) {}
 
     template<class Archive> inline void serialize(Archive& ar) {
-        ar(pos, rotation_m, radius, height, radius_tolerance, height_tolerance, z_angle, attribs);
+        ar(pos, rotation_m, radius, height, radius_tolerance, height_tolerance, z_angle, attribs, width);
     }
 };
 
@@ -1140,6 +1143,9 @@ class ModelInstance final : public ObjectBase
 {
 private:
     Geometry::Transformation m_transformation;
+    // Position and rotation used only by the assembly view. Scale and mirror stay on m_transformation.
+    Geometry::Transformation m_assemble_transformation;
+    bool                     m_assemble_initialized{ false };
 
 public:
     // flag showing the position of this instance with respect to the print volume (set by Print::validate() using ModelObject::check_instances_print_volume_state())
@@ -1177,6 +1183,14 @@ public:
     void set_mirror(const Vec3d& mirror) { m_transformation.set_mirror(mirror); }
     void set_mirror(Axis axis, double mirror) { m_transformation.set_mirror(axis, mirror); }
 
+    bool assemble_initialized() const { return m_assemble_initialized; }
+    // Bring this instance to the origin once, using the editor rotation. Later assembly moves keep their own pose.
+    void ensure_assemble_centered();
+    void set_assemble_offset(const Vec3d& offset);
+    void set_assemble_rotation(const Vec3d& rotation);
+    // Assembly position and rotation, with the editor scale and mirror applied.
+    Geometry::Transformation get_assemble_view_transformation() const;
+
     // To be called on an external mesh
     void transform_mesh(TriangleMesh* mesh, bool dont_translate = false) const;
     // Transform an external bounding box, thus the resulting bounding box is no more snug.
@@ -1210,7 +1224,7 @@ private:
     explicit ModelInstance(ModelObject* object) : print_volume_state(ModelInstancePVS_Inside), object(object) { assert(this->id().valid()); }
     // Constructor, which assigns a new unique ID.
     explicit ModelInstance(ModelObject *object, const ModelInstance &other) :
-        m_transformation(other.m_transformation), print_volume_state(ModelInstancePVS_Inside), printable(other.printable), object(object) { assert(this->id().valid() && this->id() != other.id()); }
+        m_transformation(other.m_transformation), m_assemble_transformation(other.m_assemble_transformation), m_assemble_initialized(other.m_assemble_initialized), print_volume_state(ModelInstancePVS_Inside), printable(other.printable), object(object) { assert(this->id().valid() && this->id() != other.id()); }
 
     explicit ModelInstance(ModelInstance &&rhs) = delete;
     ModelInstance& operator=(const ModelInstance &rhs) = delete;
@@ -1221,7 +1235,7 @@ private:
 	// Used for deserialization, therefore no IDs are allocated.
 	ModelInstance() : ObjectBase(-1), object(nullptr) { assert(this->id().invalid()); }
 	template<class Archive> void serialize(Archive &ar) {
-        ar(m_transformation, print_volume_state, printable);
+        ar(m_transformation, print_volume_state, printable, m_assemble_transformation, m_assemble_initialized);
     }
 };
 

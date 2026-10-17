@@ -950,6 +950,31 @@ bool SLAPrint::invalidate_state_by_config_options(const std::vector<t_config_opt
         "dynamic_tilt_up_profile"sv,
         "area_fill"sv,
         "printing_temperature"sv,
+        "exposure_pwm"sv,
+        "initial_exposure_pwm"sv,
+        "sla_initial_primary_lift_distance"sv,
+        "sla_initial_primary_lift_speed"sv,
+        "sla_initial_secondary_lift_distance"sv,
+        "sla_initial_secondary_lift_speed"sv,
+        "sla_initial_primary_retract_distance"sv,
+        "sla_initial_primary_retract_speed"sv,
+        "sla_initial_secondary_retract_distance"sv,
+        "sla_initial_secondary_retract_speed"sv,
+        "sla_initial_wait_before_lift"sv,
+        "sla_initial_wait_after_lift"sv,
+        "sla_initial_wait_after_retract"sv,
+        "sla_primary_lift_distance"sv,
+        "sla_primary_lift_speed"sv,
+        "sla_secondary_lift_distance"sv,
+        "sla_secondary_lift_speed"sv,
+        "sla_primary_retract_distance"sv,
+        "sla_primary_retract_speed"sv,
+        "sla_secondary_retract_distance"sv,
+        "sla_secondary_retract_speed"sv,
+        "sla_wait_before_lift"sv,
+        "sla_wait_after_lift"sv,
+        "sla_wait_after_retract"sv,
+        "time_estimate_correction"sv,
         "tilt_down_initial_speed_slx"sv,
         "tilt_down_finish_speed_slx"sv,
         "tilt_up_initial_speed_slx"sv,
@@ -1134,6 +1159,9 @@ bool SLAPrintObject::invalidate_state_by_config_options(const std::vector<t_conf
             || opt_key == "pad_object_connector_penetration"
             ) {
             steps.emplace_back(slaposPad);
+        } else if (opt_key == "bottom_layers") {
+            // Exposure count and the GOO time estimate. The sliced geometry stays the same.
+            invalidated |= m_print->invalidate_step(slapsMergeSlicesAndEval);
         } else {
             // All keys should be covered.
             assert(false);

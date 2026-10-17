@@ -23,6 +23,7 @@
 
 #include <string>
 #include <map>
+#include <memory>
 
 #include "GUI_Utils.hpp"
 #include "Event.hpp"
@@ -41,12 +42,15 @@ namespace GUI
 
 class Tab;
 class PrintHostQueueDialog;
+struct ProjectTabs;
 class Plater;
 class MainFrame;
 class PreferencesDialog;
 class GalleryDialog;
 class ConnectWebViewPanel; 
 class PrinterWebViewPanel;
+class ModelsPanel;
+class DevicesPanel;
 class PrintablesWebViewPanel;
 
 enum QuickSlice
@@ -91,6 +95,8 @@ class MainFrame : public DPIFrame
     wxString    m_qs_last_output_file = wxEmptyString;
     wxString    m_last_config = wxEmptyString;
     wxMenuBar*  m_menubar{ nullptr };
+    wxMenu*     m_file_menu{ nullptr };
+    wxMenu*     m_app_menu{ nullptr };
     TopBarMenus m_bar_menus;
 
     wxMenuItem* m_menu_item_reslice_now { nullptr };
@@ -164,7 +170,7 @@ protected:
 
 public:
     MainFrame(const int font_point_size);
-    ~MainFrame() = default;
+    ~MainFrame() override;
 
     void update_layout();
     void update_mode_markers();
@@ -205,12 +211,26 @@ public:
     bool        load_config_file(const std::string &path);
     void        export_configbundle(bool export_physical_printers = false);
     void        load_configbundle(wxString file = wxEmptyString);
+    // Save the current SLA printer, print profile, and resin as local user presets.
+    bool        save_printer_and_resin_presets();
+    void        export_printer_and_resin_presets();
+    void        import_printer_and_resin_presets();
     void        load_config(const DynamicPrintConfig& config);
     void        update_search_lines(const std::string search_line);
     // Select tab in m_tabpanel
     // When tab == -1, will be selected last selected tab
     void        select_tab(Tab* tab);
     void        select_tab(size_t tab = size_t(-1));
+    void        select_models_tab();
+    void        select_devices_tab();
+    void        reload_devices();
+    void        adopt_selected_offline_printer();
+    void        sync_dashboard_site();
+    void        select_active_project_tab();
+    void        new_project_tab();
+    void        open_project_tab(const wxString& filename = wxString());
+    void        close_project_tab(wxWindow* page);
+    void        refresh_project_tab_title();
     void        select_view(const std::string& direction);
     // Propagate changed configuration from the Tab to the Plater and save changes to the AppConfig
     void        on_config_changed(DynamicPrintConfig* cfg) const ;
@@ -254,6 +274,9 @@ public:
     SettingsDialog        m_settings_dialog;
     DiffPresetDialog      diff_dialog;
     wxWindow*             m_plater_page{ nullptr };
+    ModelsPanel*          m_models_panel{ nullptr };
+    DevicesPanel*         m_devices_panel{ nullptr };
+    std::unique_ptr<ProjectTabs> m_project_tabs;
 //    wxProgressDialog*     m_progress_dialog { nullptr };
     PreferencesDialog*    preferences_dialog { nullptr };
     PrintHostQueueDialog* m_printhost_queue_dlg;
@@ -268,6 +291,16 @@ public:
     uint32_t  			m_ulSHChangeNotifyRegister { 0 };
 	static constexpr int WM_USER_MEDIACHANGED { 0x7FFF }; // WM_USER from 0x0400 to 0x7FFF, picking the last one to not interfere with wxWidgets allocation
 #endif // _WIN32
+
+private:
+    void        arrange_browser_tabs();
+    void        activate_project(int slot);
+    void        park_live_project();
+    void        attach_plater(wxWindow* parent);
+    int         project_slot_for_page(wxWindow* page) const;
+    int         live_project_slot() const;
+    bool        confirm_close_project(int slot);
+    void        cycle_project_tabs(int direction);
 };
 
 } // GUI

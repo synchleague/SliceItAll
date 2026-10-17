@@ -123,15 +123,15 @@ static void print_help(const ConfigDef& config_def, bool show_defaults, std::fun
 void print_help(bool include_print_options/* = false*/, PrinterTechnology printer_technology/* = ptAny*/)
 {
     boost::nowide::cout
-        << SLIC3R_BUILD_ID << " " << "based on Slic3r"
+        << SLIC3R_BUILD_ID << " " << "(based on Prusa Slicer)"
 #ifdef SLIC3R_GUI
         << " (with GUI support)"
 #else /* SLIC3R_GUI */
         << " (without GUI support)"
 #endif /* SLIC3R_GUI */
         << std::endl
-        << "https://github.com/prusa3d/PrusaSlicer" << std::endl << std::endl
-        << "Usage: prusa-slicer [ INPUT ] [ OPTIONS ] [ ACTIONS ] [ TRANSFORM ] [ file.stl ... ]" << std::endl;
+        << "https://github.com/synchleague/SliceItAll" << std::endl << std::endl
+        << "Usage: SliceItAll [ INPUT ] [ OPTIONS ] [ ACTIONS ] [ TRANSFORM ] [ file.stl ... ]" << std::endl;
 
     boost::nowide::cout
         << std::endl

@@ -29,6 +29,7 @@
 #include "libslic3r/PresetBundle.hpp"
 
 #include "GUI_App.hpp"
+#include "MainFrame.hpp"
 #include "wxExtensions.hpp"
 #include "format.hpp"
 #include "Tab.hpp"
@@ -61,12 +62,7 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
         Tab* tab_print = wxGetApp().get_tab(Preset::TYPE_PRINT);
         if (!tab_print) return;
 
-        if (opt_key == "fill_density") {
-            tab_print->update_dirty();
-            tab_print->reload_config();
-            tab_print->update();
-        }
-        else
+        if (opt_key == "brim" || opt_key == "support")
         {
             DynamicPrintConfig new_conf = *config;
             if (opt_key == "brim") {
@@ -108,10 +104,33 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
             }
             tab_print->load_config(new_conf);
         }
+        else
+        {
+            tab_print->update_dirty();
+            tab_print->reload_config();
+            tab_print->update();
+            if (wxGetApp().plater())
+                wxGetApp().plater()->schedule_background_process();
+        }
     };
 
 
     Line line = Line { "", "" };
+
+    Option option = m_og_fff->get_option("layer_height");
+    option.opt.label = L("Layer height");
+    option.opt.full_width = true;
+    line.append_option(option);
+    m_og_fff->append_line(line);
+
+    line = Line { "", "" };
+    option = m_og_fff->get_option("perimeters");
+    option.opt.label = L("Perimeters");
+    option.opt.full_width = true;
+    line.append_option(option);
+    m_og_fff->append_line(line);
+
+    line = Line { "", "" };
 
     ConfigOptionDef support_def;
     support_def.label = L("Supports");
@@ -124,7 +143,7 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
         L("Everywhere")
     });
     support_def.set_default_value(new ConfigOptionStrings{ "None" });
-    Option option = Option(support_def, "support");
+    option = Option(support_def, "support");
     option.opt.full_width = true;
     line.append_option(option);
 
@@ -223,6 +242,15 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
         Tab* tab = wxGetApp().get_tab(Preset::TYPE_SLA_PRINT);
         if (!tab) return;
 
+        if (opt_key != "pad" && opt_key != "support") {
+            tab->update_dirty();
+            tab->reload_config();
+            tab->update();
+            if (wxGetApp().plater())
+                wxGetApp().plater()->schedule_background_process();
+            return;
+        }
+
         DynamicPrintConfig new_conf = *config_sla;
         if (opt_key == "pad") {
             const wxString& selection = boost::any_cast<wxString>(value);
@@ -263,6 +291,13 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
     };
 
     line = Line{ "", "" };
+    option = m_og_sla->get_option("layer_height");
+    option.opt.label = L("Layer height");
+    option.opt.full_width = true;
+    line.append_option(option);
+    m_og_sla->append_line(line);
+
+    line = Line{ "", "" };
 
     ConfigOptionDef support_def_sla = support_def;
     support_def_sla.set_default_value(new ConfigOptionStrings{ "None" });
@@ -297,26 +332,74 @@ FreqChangedParams::FreqChangedParams(wxWindow* parent)
     choice = dynamic_cast<Choice*>(m_og_sla->get_field("pad"));
     choice->suppress_scroll();
 
+    m_og_sla_material = std::make_shared<ConfigOptionsGroup>(parent, "");
+    m_og_sla_material->hide_labels();
+    DynamicPrintConfig* config_material = &wxGetApp().preset_bundle->sla_materials.get_edited_preset().config;
+    m_og_sla_material->set_config(config_material);
+    m_og_sla_material->on_change = [](t_config_option_key, boost::any) {
+        Tab* tab = wxGetApp().get_tab(Preset::TYPE_SLA_MATERIAL);
+        if (!tab) return;
+        tab->update_dirty();
+        tab->reload_config();
+        tab->update();
+        if (wxGetApp().plater())
+            wxGetApp().plater()->schedule_background_process();
+    };
+
+    line = Line{ "", "" };
+    option = m_og_sla_material->get_option("exposure_time");
+    option.opt.label = L("Exposure");
+    option.opt.full_width = true;
+    line.append_option(option);
+    m_og_sla_material->append_line(line);
+
+    line = Line{ "", "" };
+    option = m_og_sla_material->get_option("initial_exposure_time");
+    option.opt.label = L("Bottom exposure");
+    option.opt.full_width = true;
+    line.append_option(option);
+    m_og_sla_material->append_line(line);
+    m_og_sla_material->activate();
+
     m_sizer = new wxBoxSizer(wxVERTICAL);
+    auto* slice_heading = new wxStaticText(parent, wxID_ANY, _L("Slice settings"));
+    slice_heading->SetFont(wxGetApp().bold_font());
+    m_sizer->Add(slice_heading, 0, wxEXPAND | wxBOTTOM, 4);
     m_sizer->Add(m_og_fff->sizer, 0, wxEXPAND);
     m_sizer->Add(m_og_sla->sizer, 0, wxEXPAND);
+    m_sizer->Add(m_og_sla_material->sizer, 0, wxEXPAND);
+}
+
+void FreqChangedParams::sync_sla_material()
+{
+    if (!m_og_sla_material)
+        return;
+    const DynamicPrintConfig& cfg = wxGetApp().preset_bundle->sla_materials.get_edited_preset().config;
+    for (const char* key : { "exposure_time", "initial_exposure_time" })
+        m_og_sla_material->set_value(key, m_og_sla_material->get_config_value(cfg, key));
 }
 
 void FreqChangedParams::msw_rescale()
 {
     m_og_fff->msw_rescale();
     m_og_sla->msw_rescale();
+    if (m_og_sla_material)
+        m_og_sla_material->msw_rescale();
 }
 
 void FreqChangedParams::sys_color_changed()
 {
     m_og_fff->sys_color_changed();
     m_og_sla->sys_color_changed();
+    if (m_og_sla_material)
+        m_og_sla_material->sys_color_changed();
 
     for (auto btn: m_empty_buttons)
         btn->sys_color_changed();
 
     wxGetApp().UpdateDarkUI(m_wiping_dialog_button, true);
+    if (m_all_settings_button)
+        wxGetApp().UpdateDarkUI(m_all_settings_button, true);
     if (m_full_spectrum_button) {
         wxGetApp().UpdateDarkUI(m_full_spectrum_button, true);
     }
@@ -328,6 +411,8 @@ void FreqChangedParams::Show(bool is_fff) const
     const bool is_fsb_shown = m_full_spectrum_button == nullptr || m_full_spectrum_button->IsShown();
     m_og_fff->Show(is_fff);
     m_og_sla->Show(!is_fff);
+    if (m_og_sla_material)
+        m_og_sla_material->Show(!is_fff);
 
     // correct showing of the FreqChangedParams sizer when m_wiping_dialog_button is hidden
     if (is_fff && !is_wdb_shown)

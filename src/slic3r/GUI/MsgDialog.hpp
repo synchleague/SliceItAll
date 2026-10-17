@@ -18,6 +18,7 @@
 
 class wxBoxSizer;
 class CheckBox;
+class wxCheckBox;
 class wxStaticBitmap;
 
 namespace Slic3r {
@@ -359,9 +360,12 @@ public:
 	virtual ~InfoDialog() = default;
 
 	void set_caption(const wxString& caption) { this->SetTitle(caption); }
+	void show_dont_show_again(const wxString& label);
+	bool dont_show_again() const { return m_dont_show && m_dont_show->GetValue(); }
 
 private:
-	wxString msg;
+	wxString    msg;
+	wxCheckBox* m_dont_show { nullptr };
 };
 
 

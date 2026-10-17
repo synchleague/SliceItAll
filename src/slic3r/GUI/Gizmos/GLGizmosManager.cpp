@@ -30,8 +30,12 @@
 #include "slic3r/GUI/Gizmos/GLGizmoEmboss.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoSVG.hpp"
 #include "slic3r/GUI/Gizmos/GLGizmoMeasure.hpp"
+#include "slic3r/GUI/Gizmos/GLGizmoBrimEars.hpp"
+#include "slic3r/GUI/GLModel.hpp"
+#include "slic3r/GUI/GLShader.hpp"
 
 #include "libslic3r/format.hpp"
+#include <algorithm>
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
 
@@ -40,7 +44,15 @@
 namespace Slic3r {
 namespace GUI {
 
-const float GLGizmosManager::Default_Icons_Size = 52;// 64;
+const float GLGizmosManager::Default_Icons_Size = 36.f;
+
+namespace {
+// Pixels above the vertical center, so the lowest tool clears the view selector.
+float tool_column_lift_px(float scale)
+{
+    return 24.f * std::max(scale, 1.f);
+}
+}
 
 GLGizmosManager::GLGizmosManager(GLCanvas3D& parent)
     : m_parent(parent)
@@ -55,11 +67,25 @@ GLGizmosManager::GLGizmosManager(GLCanvas3D& parent)
 
 std::vector<size_t> GLGizmosManager::get_selectable_idxs() const
 {
+    // Move, scale and rotate stay together. Mesh tools follow the separator.
+    const EType preferred[] = {
+        Move, Scale, Rotate,
+        BrimEars, Cut, Emboss, Svg,
+        Flatten, Hollow, SlaSupports, FdmSupports, Seam, FuzzySkin, MmSegmentation, Measure
+    };
     std::vector<size_t> out;
-    out.reserve(m_gizmos.size());
-    for (size_t i=0; i<m_gizmos.size(); ++i)
-        if (m_gizmos[i]->is_selectable())
-            out.push_back(i);
+    std::vector<bool> used(m_gizmos.size(), false);
+    for (EType type : preferred) {
+        const size_t idx = size_t(type);
+        if (idx < m_gizmos.size() && m_gizmos[idx] && m_gizmos[idx]->is_selectable()) {
+            out.push_back(idx);
+            used[idx] = true;
+        }
+    }
+    for (size_t idx = 0; idx < m_gizmos.size(); ++idx) {
+        if (!used[idx] && m_gizmos[idx] && m_gizmos[idx]->is_selectable())
+            out.push_back(idx);
+    }
     return out;
 }
 
@@ -73,18 +99,21 @@ GLGizmosManager::EType GLGizmosManager::get_gizmo_from_mouse(const Vec2d &mouse_
     float border     = m_layout.scaled_border();
     float stride_y   = m_layout.scaled_stride_y();
     float gap_x      = m_layout.scaled_gap_x();
-    float top_y      = 0.5f * (cnv_h - height) + border;
+    // The column sits a little above center so it clears the view selector.
+    float top_y      = 0.5f * (cnv_h - height) + border - tool_column_lift_px(m_layout.scale);
 
     // is mouse horizontally in the area?
     if (border <= (float) mouse_pos(0) &&
          (float) mouse_pos(0) <= (border+gap_x + icons_size)) {
-        // which icon is it on?
-        size_t from_top = (size_t) ((float) mouse_pos(1) - top_y) / stride_y;
-        // is it really on the icon or already past the border?
-        if ((float) mouse_pos(1) <= top_y + from_top * stride_y + icons_size) {
-            std::vector<size_t> selectable = get_selectable_idxs();
-            if (from_top < selectable.size()) 
-                return static_cast<EType>(selectable[from_top]);
+        const float extra = m_layout.scaled_gap_y();
+        const std::vector<size_t> selectable = get_selectable_idxs();
+        float y = top_y;
+        for (size_t idx : selectable) {
+            if ((float) mouse_pos(1) >= y && (float) mouse_pos(1) <= y + icons_size)
+                return static_cast<EType>(idx);
+            y += stride_y;
+            if (idx == size_t(Rotate))
+                y += extra;
         }
     }
     return Undefined;
@@ -120,6 +149,7 @@ bool GLGizmosManager::init()
     m_gizmos.emplace_back(new GLGizmoEmboss(m_parent));
     m_gizmos.emplace_back(new GLGizmoSVG(m_parent));
     m_gizmos.emplace_back(new GLGizmoSimplify(m_parent));
+    m_gizmos.emplace_back(new GLGizmoBrimEars(m_parent, "skirt+brim.svg", 15));
 
     m_common_gizmos_data.reset(new CommonGizmosDataPool(&m_parent));
 
@@ -187,6 +217,20 @@ void GLGizmosManager::reset_all_states()
 
     activate_gizmo(Undefined);
     m_hover = Undefined;
+}
+
+static const ModelVolume* selected_model_volume(const GLCanvas3D& canvas)
+{
+    const Selection& selection = canvas.get_selection();
+    const GLVolume* gl_volume = selection.get_first_volume();
+    if (gl_volume == nullptr || selection.volumes_count() != 1)
+        return nullptr;
+    const int object_idx = gl_volume->object_idx();
+    const int volume_idx = gl_volume->volume_idx();
+    const ModelObjectPtrs& objects = wxGetApp().plater()->model().objects;
+    if (object_idx < 0 || volume_idx < 0 || object_idx >= int(objects.size()) || volume_idx >= int(objects[object_idx]->volumes.size()))
+        return nullptr;
+    return objects[object_idx]->volumes[volume_idx];
 }
 
 bool GLGizmosManager::open_gizmo(EType type)
@@ -429,7 +473,16 @@ bool GLGizmosManager::gizmos_toolbar_on_mouse(const wxMouseEvent &mouse_event) {
         // mouse is above toolbar
         if (mouse_event.LeftDown() || mouse_event.LeftDClick()) {
             mc.left = true;
-            open_gizmo(gizmo);
+            const ModelVolume* volume = selected_model_volume(m_parent);
+            const bool edit_existing = volume != nullptr &&
+                ((gizmo == Emboss && volume->is_text()) || (gizmo == Svg && volume->is_svg()));
+            if (!edit_existing && m_current != gizmo && (gizmo == Emboss || gizmo == Svg)) {
+                if (gizmo == Emboss)
+                    static_cast<GLGizmoEmboss*>(m_gizmos[Emboss].get())->create_volume(ModelVolumeType::MODEL_PART);
+                else
+                    static_cast<GLGizmoSVG*>(m_gizmos[Svg].get())->create_volume(ModelVolumeType::MODEL_PART);
+            } else
+                open_gizmo(gizmo);
             return true;
         }
         else if (mouse_event.RightDown()) {
@@ -756,7 +809,7 @@ void GLGizmosManager::render_arrow(const GLCanvas3D& parent, EType highlighted_t
     const float inv_cnv_h = 1.0f / cnv_h;
 
     const float top_x = -1.0f;
-    float top_y = get_scaled_total_height() * inv_cnv_h;
+    float top_y = get_scaled_total_height() * inv_cnv_h + 2.0f * tool_column_lift_px(m_layout.scale) * inv_cnv_h;
 
     const float icons_size_x = 2.0f * m_layout.scaled_icons_size() * inv_cnv_w;
     const float icons_size_y = 2.0f * m_layout.scaled_icons_size() * inv_cnv_h;
@@ -784,6 +837,8 @@ void GLGizmosManager::render_arrow(const GLCanvas3D& parent, EType highlighted_t
             break;
         }
         top_y -= stride_y;
+        if (idx == size_t(Rotate))
+            top_y -= 2.0f * m_layout.scaled_gap_y() * inv_cnv_h;
     }
 }
 
@@ -809,7 +864,7 @@ void GLGizmosManager::do_render_overlay() const
     const float border_w = 2.0f * m_layout.scaled_border() * inv_cnv_w;
 
     float top_x = -1.0f;
-    float top_y = 0.5f * height;
+    float top_y = 0.5f * height + 2.0f * tool_column_lift_px(m_layout.scale) * inv_cnv_h;
 
     render_background(top_x, top_y, top_x + width, top_y - height, border_w, border_h);
 
@@ -859,15 +914,65 @@ void GLGizmosManager::do_render_overlay() const
             current_y = 0.5f * cnv_h - 0.5f * top_y * cnv_h;
         }
         top_y -= stride_y;
+        if (idx == size_t(Rotate)) {
+            const float extra_y = 2.0f * m_layout.scaled_gap_y() * inv_cnv_h;
+            const float half = std::max(2.0f * inv_cnv_h, extra_y * 0.12f);
+            render_toolbar_separator(top_x, top_x + icons_size_x, top_y - 0.5f * extra_y, half);
+            top_y -= extra_y;
+        }
     }
 
-    if (m_current != Undefined)
-        m_gizmos[m_current]->render_input_window(get_scaled_total_width(), current_y, cnv_h - wxGetApp().plater()->get_view_toolbar().get_height());
+    if (m_current != Undefined) {
+        const float bed_bar = m_parent.get_bed_selector_height();
+        const float view_bar = wxGetApp().plater()->get_view_toolbar().get_height();
+        const float scale = wxGetApp().imgui() ? wxGetApp().imgui()->get_style_scaling() : 1.f;
+        const float gap = 8.f * std::max(1.f, scale);
+        const float bottom_limit = cnv_h - bed_bar - view_bar - gap;
+        m_gizmos[m_current]->render_input_window(get_scaled_total_width(), current_y, bottom_limit);
+    }
 }
 
 float GLGizmosManager::get_scaled_total_height() const
 {
-    return 2.0f * m_layout.scaled_border() + (float)get_selectable_idxs().size() * m_layout.scaled_stride_y() - m_layout.scaled_gap_y();
+    const std::vector<size_t> selectable = get_selectable_idxs();
+    float extra = 0.f;
+    for (size_t idx : selectable)
+        if (idx == size_t(Rotate))
+            extra += m_layout.scaled_gap_y();
+    return 2.0f * m_layout.scaled_border() + (float)selectable.size() * m_layout.scaled_stride_y() - m_layout.scaled_gap_y() + extra;
+}
+
+void GLGizmosManager::render_toolbar_separator(float left, float right, float y_center, float half_thickness) const
+{
+    GLModel::Geometry geo;
+    geo.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3 };
+    geo.reserve_vertices(4);
+    geo.reserve_indices(6);
+    geo.color = ColorRGBA(254.f / 255.f, 50.f / 255.f, 173.f / 255.f, 1.f);
+    const float y0 = y_center - half_thickness;
+    const float y1 = y_center + half_thickness;
+    geo.add_vertex(Vec3f(left, y0, 0.f));
+    geo.add_vertex(Vec3f(right, y0, 0.f));
+    geo.add_vertex(Vec3f(right, y1, 0.f));
+    geo.add_vertex(Vec3f(left, y1, 0.f));
+    geo.add_triangle(0, 1, 2);
+    geo.add_triangle(2, 3, 0);
+
+    GLModel model;
+    if (geo.is_empty())
+        return;
+    model.init_from(std::move(geo));
+
+    GLShaderProgram* shader = wxGetApp().get_shader("flat");
+    if (shader == nullptr)
+        return;
+
+    glsafe(::glDisable(GL_DEPTH_TEST));
+    shader->start_using();
+    shader->set_uniform("view_model_matrix", Transform3d::Identity());
+    shader->set_uniform("projection_matrix", Transform3d::Identity());
+    model.render();
+    shader->stop_using();
 }
 
 float GLGizmosManager::get_scaled_total_width() const

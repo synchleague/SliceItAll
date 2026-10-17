@@ -37,7 +37,7 @@ static const char* URL_CHANGELOG = "https://files.prusa3d.com/?latest=slicer-sta
 static const char* URL_DOWNLOAD = "https://www.prusa3d.com/slicerweb&lng=%1%";
 static const char* URL_DEV = "https://github.com/prusa3d/PrusaSlicer/releases/tag/version_%1%";
 
-static const std::string CONFIG_UPDATE_WIKI_URL("https://github.com/prusa3d/PrusaSlicer/wiki/Slic3r-PE-1.40-configuration-update");
+static const std::string CONFIG_UPDATE_WIKI_URL("https://github.com/synchleague/SliceItAll/wiki");
 
 
 // MsgUpdateSlic3r
@@ -118,7 +118,7 @@ AppUpdateAvailableDialog::AppUpdateAvailableDialog(const Semver& ver_current, co
 	
     if (browser_on_next)
     {
-        content_sizer->Add(new wxStaticText(this, wxID_ANY, _L("Clicking \'Next\' will open a browser window where you can select which variant of PrusaSlicer you want to download.")));
+        content_sizer->Add(new wxStaticText(this, wxID_ANY, _L("Clicking \'Next\' will open the GitHub release page.")));
         content_sizer->AddSpacer(VERT_SPACING);
     }
 
@@ -279,8 +279,8 @@ boost::filesystem::path AppUpdateDownloadDialog::get_download_path() const
 
 MsgUpdateConfig::MsgUpdateConfig(const std::vector<Update> &updates, PresetUpdater::UpdateParams update_params) :
 	MsgDialog(nullptr, update_params == PresetUpdater::UpdateParams::FORCED_BEFORE_WIZARD  ? _L("Opening Configuration Wizard") : _L("Configuration update"), 
-					   update_params == PresetUpdater::UpdateParams::FORCED_BEFORE_WIZARD ? _L("PrusaSlicer is not using the newest configuration available.\n"
-												"Configuration Wizard may not offer the latest printers, filaments and SLA materials to be installed.") : 
+					   update_params == PresetUpdater::UpdateParams::FORCED_BEFORE_WIZARD ? format_wxstr(_L("%1% is not using the newest configuration available.\n"
+												"Configuration Wizard may not offer the latest printers, filaments and materials to be installed."), wxString(SLIC3R_APP_NAME)) : 
 											 _L("Configuration update is available"), wxICON_ERROR)
 {
 	auto *text = new wxStaticText(this, wxID_ANY, _(L(
@@ -485,7 +485,6 @@ MsgDataLegacy::MsgDataLegacy() :
 	content_sizer->AddSpacer(VERT_SPACING);
 
 	auto *text2 = new wxStaticText(this, wxID_ANY, _(L("For more information please visit our wiki page:")));
-	static const wxString url("https://github.com/prusa3d/PrusaSlicer/wiki/Slic3r-PE-1.40-configuration-update");
 	// The wiki page name is intentionally not localized:
 	// TRN %s = PrusaSlicer
 	auto *link = new wxHyperlinkCtrl(this, wxID_ANY, format_wxstr(_L("%s 1.40 configuration update"), SLIC3R_APP_NAME), CONFIG_UPDATE_WIKI_URL);

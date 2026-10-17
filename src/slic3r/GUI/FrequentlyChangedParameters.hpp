@@ -41,6 +41,8 @@ class FreqChangedParams
 
     std::shared_ptr<ConfigOptionsGroup> m_og_fff;
     std::shared_ptr<ConfigOptionsGroup> m_og_sla;
+    std::shared_ptr<ConfigOptionsGroup> m_og_sla_material;
+    wxButton*                           m_all_settings_button { nullptr };
 
     std::vector<ScalableButton*>        m_empty_buttons;
 
@@ -56,6 +58,8 @@ public:
     void            update_full_spectrum_visibility(int physical_extruder_count);
 
     ConfigOptionsGroup* get_og(bool is_fff);
+    ConfigOptionsGroup* get_og_sla_material() { return m_og_sla_material.get(); }
+    void            sync_sla_material();
 
     void            msw_rescale();
     void            sys_color_changed();

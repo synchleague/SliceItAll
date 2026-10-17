@@ -284,8 +284,8 @@ int wmain(int argc, wchar_t **argv)
     if (load_mesa) {
         bool res = opengl_version_check.unload_opengl_dll();
         if (!res) {
-            MessageBox(nullptr, L"PrusaSlicer was unable to automatically switch to MESA OpenGL library\nPlease, try to run the application using the '--sw-renderer' option.\n",
-                L"PrusaSlicer Warning", MB_OK);
+            MessageBox(nullptr, L"Slice it All was unable to automatically switch to MESA OpenGL library\nPlease, try to run the application using the '--sw-renderer' option.\n",
+                L"Slice it All Warning", MB_OK);
             return -1;
         }
         else {
@@ -304,11 +304,11 @@ int wmain(int argc, wchar_t **argv)
 
     wchar_t path_to_slic3r[MAX_PATH + 1] = { 0 };
     wcscpy(path_to_slic3r, path_to_exe);
-    wcscat(path_to_slic3r, L"PrusaSlicer.dll");
+    wcscat(path_to_slic3r, L"SliceItAll.dll");
 //	printf("Loading Slic3r library: %S\n", path_to_slic3r);
     HINSTANCE hInstance_Slic3r = LoadLibraryExW(path_to_slic3r, nullptr, 0);
     if (hInstance_Slic3r == nullptr) {
-        printf("PrusaSlicer.dll was not loaded\n");
+        printf("SliceItAll.dll was not loaded\n");
         return -1;
     }
 
@@ -322,7 +322,7 @@ int wmain(int argc, wchar_t **argv)
 #endif
         );
     if (slic3r_main == nullptr) {
-        printf("could not locate the function slic3r_main in PrusaSlicer.dll\n");
+        printf("could not locate the function slic3r_main in SliceItAll.dll\n");
         return -1;
     }
     // argc minus the trailing nullptr of the argv

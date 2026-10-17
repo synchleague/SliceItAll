@@ -139,7 +139,7 @@ public:
 	void 				set_legacy_datadir(bool value) { m_legacy_datadir = value; }
 
 	// Get the Slic3r version check url.
-	// This returns a hardcoded string unless it is overriden by "version_check_url" in the ini file.
+	// GitHub releases API for synchleague/SliceItAll.
 	std::string 		version_check_url() const;
 	// Get the Slic3r url to vendor index archive zip.
 	std::string  		index_archive_url() const;

@@ -5,6 +5,7 @@
 ///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
 ///|/
 #include "BackgroundSlicingProcess.hpp"
+#include "FilamentRack.hpp"
 #include "GUI_App.hpp"
 #include "GUI.hpp"
 #include "MainFrame.hpp"
@@ -88,9 +89,9 @@ std::pair<std::string, bool> SlicingProcessCompletedEvent::format_error_message(
                               "be glad if you reported it."), SLIC3R_APP_NAME);
         error += "\n\n" + std::string(ex.what());
     } catch (const HardCrash &ex) {
-        error = GUI::format(_L("PrusaSlicer has encountered a fatal error: \"%1%\""), ex.what()) + "\n\n" +
-        		_u8L("Please save your project and restart PrusaSlicer. "
-                     "We would be glad if you reported the issue.");
+        error = GUI::format(_L("%1% has encountered a fatal error: \"%2%\""), SLIC3R_APP_NAME, ex.what()) + "\n\n" +
+        		Slic3r::format(_u8L("Please save your project and restart %1%. "
+                     "We would be glad if you reported the issue."), SLIC3R_APP_NAME);
     } catch (PlaceholderParserError &ex) {
 		error = ex.what();
 		monospace = true;
@@ -171,6 +172,12 @@ void BackgroundSlicingProcess::process_fff()
 	// Passing the timestamp 
 	evt.SetInt((int)(m_fff_print->step_state_with_timestamp(PrintStep::psSlicingFinished).timestamp));
 	wxQueueEvent(GUI::wxGetApp().mainframe->m_plater, evt.Clone());
+	// A supports-only task stops before skirt, brim and G-code. The preview can
+	// already show the support toolpaths from the object steps.
+	if (!m_fff_print->is_step_done(psSlicingFinished)) {
+		m_print->set_status(100, _u8L("Supports generated"));
+		return;
+	}
 	m_fff_print->export_gcode(m_temp_output_path, m_gcode_result, [this](const ThumbnailsParams& params) { return this->render_thumbnails(params); });
 	if (this->set_step_started(bspsGCodeFinalize)) {
 	    if (! m_export_path.empty()) {
@@ -190,6 +197,12 @@ void BackgroundSlicingProcess::process_sla()
 {
     assert(m_print == m_sla_print);
     m_print->process();
+    // Support meshes are ready at the pad step. Skip rasterizing every layer
+    // unless this run was started as an export.
+    if (!m_sla_print->is_step_done(slapsRasterize) && m_export_path.empty() && m_upload_job.empty()) {
+        m_print->set_status(100, _u8L("Supports generated"));
+        return;
+    }
     if (this->set_step_started(bspsGCodeFinalize)) {
         if (! m_export_path.empty()) {
 			wxQueueEvent(GUI::wxGetApp().mainframe->m_plater, new wxCommandEvent(m_event_export_began_id));
@@ -788,6 +801,9 @@ void BackgroundSlicingProcess::prepare_upload(PrintHostJob &upload_job)
     m_print->set_status(100, GUI::format(_L("Scheduling upload to `%1%`. See Window -> Print Host Upload Queue"), upload_job.printhost->get_host()));
 
 	upload_job.upload_data.source_path = std::move(source_path);
+	if (!upload_job.filament_slot_map.empty()
+		&& !GUI::remap_gcode_tools(upload_job.upload_data.source_path.string(), upload_job.filament_slot_map))
+		m_print->set_status(96, _u8L("Filament slots were not written into this file because it is not plain G-code."));
 
 	GUI::wxGetApp().printhost_job_queue().enqueue(std::move(upload_job));
 }

@@ -34,10 +34,12 @@ void main()
     float dy_vtc = dFdy(z_in_cells);
     float lod = clamp(0.5 * log2(max(dx_vtc * dx_vtc, dy_vtc * dy_vtc)), 0., 1.);
     // Sample the Z texture. Texture coordinates are normalized to <0, 1>.
+    // textureLod picks mip 0 (stripes) and mip 1 (solid thickness color) directly.
+    // A huge texture() bias is ignored by some drivers and both samples come back black.
     vec4 color = vec4(0.25, 0.25, 0.25, 1.0);
     if (z_texture_row >= 0.0)
-        color = mix(texture(z_texture, vec2(z_texture_col, z_texture_row_to_normalized * (z_texture_row + 0.5    )), -10000.),
-                    texture(z_texture, vec2(z_texture_col, z_texture_row_to_normalized * (z_texture_row * 2. + 1.)),  10000.), lod);            
+        color = mix(textureLod(z_texture, vec2(z_texture_col, z_texture_row_to_normalized * (z_texture_row + 0.5)), 0.0),
+                    textureLod(z_texture, vec2(z_texture_col, z_texture_row_to_normalized * (z_texture_row * 2.0 + 1.0)), 1.0), lod);            
     // Mix the final color.
     out_color = vec4(vec3(intensity.y), 1.0) +  intensity.x * mix(color, vec4(1.0, 1.0, 0.0, 1.0), z_blend);
 }

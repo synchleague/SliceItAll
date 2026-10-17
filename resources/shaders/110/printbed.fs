@@ -1,7 +1,7 @@
 #version 110
 
-const vec3 back_color_dark  = vec3(0.235, 0.235, 0.235);
-const vec3 back_color_light = vec3(0.365, 0.365, 0.365);
+const vec3 back_color_dark  = vec3(0.145, 0.145, 0.165);
+const vec3 back_color_light = vec3(0.220, 0.220, 0.245);
 
 uniform sampler2D texture;
 uniform bool transparent_background;
@@ -25,6 +25,8 @@ vec4 non_svg_color()
 {
     // takes foreground from texture
     vec4 color = texture2D(texture, tex_coord);
+    // Pull bright bed photos down into the dark plate without flattening the pattern.
+    color.rgb *= vec3(0.48, 0.48, 0.52);
     return vec4(color.rgb, transparent_background ? color.a * 0.25 : color.a);
 }
 

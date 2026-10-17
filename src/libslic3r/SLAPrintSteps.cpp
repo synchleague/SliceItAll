@@ -893,10 +893,15 @@ void SLAPrint::Steps::generate_pad(SLAPrintObject &po) {
         ctl.cancelfn = [this]() { throw_if_canceled(); };
         po.m_supportdata->create_pad(ctl);
 
-        if (!validate_pad(po.m_supportdata->pad_mesh.its, pcfg))
-            throw Slic3r::SlicingError(
-                    _u8L("No pad can be generated for this model with the "
-                      "current configuration"));
+        if (!validate_pad(po.m_supportdata->pad_mesh.its, pcfg)) {
+            // An empty pad used to abort the whole slice. Keep going so a
+            // model that cannot grow a pad can still be sliced; the pad is
+            // simply left off.
+            po.m_supportdata->pad_mesh.clear();
+            po.active_step_add_warning(
+                PrintStateBase::WarningLevel::NON_CRITICAL,
+                _u8L("No pad can be generated for this model with the current configuration."));
+        }
 
     } else if(po.m_supportdata) {
         po.m_supportdata->pad_mesh = {};
@@ -1159,7 +1164,6 @@ static SLATimeEstimateInput prepare_sla_time_estimate_input(
     const auto height        = printer_config.display_height.getFloat();
 
     return SLATimeEstimateInput{
-        // TODO: add designated initializers when we will switch to C++20
         material_config.area_fill.getFloat() * 0.01,
         printer_config.fast_tilt_time.getFloat(),
         printer_config.slow_tilt_time.getFloat(),
@@ -1242,9 +1246,56 @@ static ExPolygons printlayerfn(const SLAPrint& print, size_t layer_idx, std::vec
     for(ExPolygon& poly : model_polygons) trslices.emplace_back(std::move(poly));
     for(ExPolygon& poly : supports_polygons) trslices.emplace_back(std::move(poly));
 
-    const auto [layer_time, is_fast_layer] = calculate_layer_time(
-        prepare_sla_time_estimate_input(print.printer_config(), print.material_config(),
-            print.default_object_config(), layer_idx, l_height, layer_area));
+    const SLAPrinterConfig &printer_cfg = print.printer_config();
+    const SLAMaterialConfig &material_cfg = print.material_config();
+    const SLAPrintObjectConfig &object_cfg = print.default_object_config();
+    const bool lift_motion = std::isnan(printer_cfg.fast_tilt_time.getFloat())
+        || std::isnan(printer_cfg.slow_tilt_time.getFloat())
+        || std::isnan(printer_cfg.high_viscosity_tilt_time.getFloat());
+
+    double layer_time = 0.;
+    bool is_fast_layer = false;
+    if (lift_motion) {
+        const int layer_number = int(layer_idx) + 1;
+        const int bottom_layers = std::max(object_cfg.bottom_layers.getInt(), 1);
+        const int faded_layers = std::max(object_cfg.faded_layers.getInt(), 0);
+        const double initial_exposure = material_cfg.initial_exposure_time.getFloat();
+        const double exposure = material_cfg.exposure_time.getFloat();
+        const bool bottom = layer_number <= bottom_layers;
+        if (bottom)
+            layer_time = initial_exposure;
+        else {
+            const double span = double(faded_layers);
+            const double t = span <= 0. ? 1. : std::clamp((double(layer_number - bottom_layers) - 1.) / span, 0., 1.);
+            layer_time = initial_exposure * (1. - t) + exposure * t;
+        }
+
+        auto travel_seconds = [](double distance_mm, double speed_mm_min) {
+            if (!(distance_mm > 0.) || !(speed_mm_min > 0.))
+                return 0.;
+            return distance_mm / speed_mm_min * 60.;
+        };
+        layer_time += bottom ? material_cfg.sla_initial_wait_before_lift.getFloat() : material_cfg.sla_wait_before_lift.getFloat();
+        layer_time += bottom ? material_cfg.sla_initial_wait_after_lift.getFloat() : material_cfg.sla_wait_after_lift.getFloat();
+        layer_time += bottom ? material_cfg.sla_initial_wait_after_retract.getFloat() : material_cfg.sla_wait_after_retract.getFloat();
+        layer_time += travel_seconds(
+            bottom ? material_cfg.sla_initial_primary_lift_distance.getFloat() : material_cfg.sla_primary_lift_distance.getFloat(),
+            bottom ? material_cfg.sla_initial_primary_lift_speed.getFloat() : material_cfg.sla_primary_lift_speed.getFloat());
+        layer_time += travel_seconds(
+            bottom ? material_cfg.sla_initial_secondary_lift_distance.getFloat() : material_cfg.sla_secondary_lift_distance.getFloat(),
+            bottom ? material_cfg.sla_initial_secondary_lift_speed.getFloat() : material_cfg.sla_secondary_lift_speed.getFloat());
+        layer_time += travel_seconds(
+            bottom ? material_cfg.sla_initial_primary_retract_distance.getFloat() : material_cfg.sla_primary_retract_distance.getFloat(),
+            bottom ? material_cfg.sla_initial_primary_retract_speed.getFloat() : material_cfg.sla_primary_retract_speed.getFloat());
+        layer_time += travel_seconds(
+            bottom ? material_cfg.sla_initial_secondary_retract_distance.getFloat() : material_cfg.sla_secondary_retract_distance.getFloat(),
+            bottom ? material_cfg.sla_initial_secondary_retract_speed.getFloat() : material_cfg.sla_secondary_retract_speed.getFloat());
+        layer_time += printer_cfg.time_estimate_correction.getFloat();
+        is_fast_layer = !bottom;
+    } else {
+        std::tie(layer_time, is_fast_layer) = calculate_layer_time(
+            prepare_sla_time_estimate_input(printer_cfg, material_cfg, object_cfg, layer_idx, l_height, layer_area));
+    }
 
     // Collect values for this layer.
     layers_info[layer_idx] = SLALayerInfo{layer_time, layer_area, is_fast_layer, models_volume, supports_volume};

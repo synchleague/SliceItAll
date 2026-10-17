@@ -101,6 +101,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Gizmos/GLGizmoMmuSegmentation.hpp
     GUI/Gizmos/GLGizmoMeasure.cpp
     GUI/Gizmos/GLGizmoMeasure.hpp
+    GUI/Gizmos/GLGizmoBrimEars.cpp
+    GUI/Gizmos/GLGizmoBrimEars.hpp
     GUI/LibVGCode/LibVGCodeWrapper.hpp
     GUI/LibVGCode/LibVGCodeWrapper.cpp
     GUI/GLSelectionRectangle.cpp
@@ -161,6 +163,16 @@ set(SLIC3R_GUI_SOURCES
     GUI/BulkExportDialog.cpp
     GUI/PhysicalPrinterDialog.hpp
     GUI/PhysicalPrinterDialog.cpp
+    GUI/DevicesPanel.hpp
+    GUI/DevicesPanel.cpp
+    GUI/FilamentRack.hpp
+    GUI/FilamentRack.cpp
+    GUI/DashboardSite.hpp
+    GUI/DashboardSite.cpp
+    GUI/EditorPlugin.hpp
+    GUI/EditorPlugin.cpp
+    GUI/CatalogDialog.hpp
+    GUI/CatalogDialog.cpp
     GUI/GUI_Factories.cpp
     GUI/GUI_Factories.hpp
     GUI/GUI_ObjectList.cpp
@@ -360,6 +372,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/Jwt.hpp
     Utils/Moonraker.cpp
     Utils/Moonraker.hpp
+    Utils/Anycubic.cpp
+    Utils/Anycubic.hpp
     Utils/OctoPrint.cpp
     Utils/OctoPrint.hpp
     Utils/Duet.cpp

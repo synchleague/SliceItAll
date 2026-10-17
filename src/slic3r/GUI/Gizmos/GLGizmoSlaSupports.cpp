@@ -604,9 +604,6 @@ void GLGizmoSlaSupports::on_render_input_window(float x, float y, float bottom_l
         m_icons = init_icons(m_icon_manager, icon_size);
     }
 
-    static float last_y = 0.0f;
-    static float last_h = 0.0f;
-
     ModelObject* mo = m_c->selection_info()->model_object();
 
     if (! mo)
@@ -620,20 +617,8 @@ RENDER_AGAIN:
     //ImGui::SetNextWindowPos(ImVec2(x, y - std::max(0.f, y+window_size.y-bottom_limit) ));
     //ImGui::SetNextWindowSize(ImVec2(window_size));
 
-    ImGuiPureWrap::begin(get_name(), ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
-
-    // adjust window position to avoid overlap the view toolbar
-    float win_h = ImGui::GetWindowHeight();
-    y = std::min(y, bottom_limit - win_h);
-    ImGui::SetWindowPos(ImVec2(x, y), ImGuiCond_Always);
-    if (last_h != win_h || last_y != y) {
-        // ask canvas for another frame to render the window in the correct position
-        m_imgui->set_requires_extra_frame();
-        if (last_h != win_h)
-            last_h = win_h;
-        if (last_y != y)
-            last_y = y;
-    }
+    ImGuiPureWrap::begin(get_name(), ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+    GLGizmoBase::place_input_window(get_name(), x, y, bottom_limit);
 
     // First calculate width of all the texts that are could possibly be shown. We will decide set the dialog width based on that:
 

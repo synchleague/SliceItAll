@@ -86,6 +86,7 @@ public:
         Emboss,
         Svg,
         Simplify,
+        BrimEars,
         Undefined
     };
 
@@ -245,6 +246,7 @@ private:
                      bool              control_down   = false);
     
     void render_background(float left, float top, float right, float bottom, float border_w, float border_h) const;
+    void render_toolbar_separator(float left, float right, float y_center, float half_thickness) const;
 
     void do_render_overlay() const;
     bool generate_icons_texture();

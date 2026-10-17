@@ -343,6 +343,22 @@ void OptionsGroup::set_max_win_width(int max_win_width)
         custom_ctrl->set_max_win_width(max_win_width);
 }
 
+void OptionsGroup::constrain_field_widths(int width_px)
+{
+    if (width_px < 1)
+        return;
+    for (auto& field : m_fields) {
+        if (!field.second || dynamic_cast<CheckBox*>(field.second.get()))
+            continue;
+        wxWindow* win = field.second->getWindow();
+        if (!win)
+            continue;
+        const int height = win->GetSize().GetHeight();
+        win->SetMinSize(wxSize(width_px, height > 0 ? height : -1));
+        win->SetMaxSize(wxSize(width_px, -1));
+    }
+}
+
 void OptionsGroup::show_field(const t_config_option_key& opt_key, bool show/* = true*/)
 {
     Field* field = get_field(opt_key);
@@ -495,27 +511,30 @@ void OptionsGroup::activate_line(Line& line)
         else {
             if (!line.near_label_widget || !line.label.IsEmpty()) {
                 // Only create the label if it is going to be displayed.
-                long label_style = staticbox ? 0 : wxALIGN_RIGHT;
+                long label_style = wxALIGN_LEFT;
 #ifdef __WXGTK__
                 // workaround for correct text align of the StaticBox on Linux
                 // flags wxALIGN_RIGHT and wxALIGN_CENTRE don't work when Ellipsize flags are _not_ given.
                 // Text is properly aligned only when Ellipsize is checked.
                 label_style |= staticbox ? 0 : wxST_ELLIPSIZE_END;
 #endif /* __WXGTK__ */
-                label = new wxStaticText(this->ctrl_parent(), wxID_ANY, line.label + (line.label.IsEmpty() ? "" : ": "),
-                    wxDefaultPosition, wxSize(label_width * wxGetApp().em_unit(), -1), label_style);
+                const int label_px = label_width * wxGetApp().em_unit();
+                label = new wxStaticText(this->ctrl_parent(), wxID_ANY, line.label,
+                    wxDefaultPosition, wxSize(label_px, -1), label_style);
                 label->SetBackgroundStyle(wxBG_STYLE_PAINT);
                 label->SetFont(wxGetApp().normal_font());
-                label->Wrap(label_width * wxGetApp().em_unit()); // avoid a Linux/GTK bug
+                // Best size is the unwrapped string, which pushes the editor past the pane.
+                label->SetMaxSize(wxSize(label_px, -1));
+                label->Wrap(label_px); // avoid a Linux/GTK bug
             }
             if (!line.near_label_widget)
-                m_grid_sizer->Add(label, 0, (staticbox ? 0 : wxALIGN_RIGHT | wxRIGHT) | wxALIGN_CENTER_VERTICAL, line.label.IsEmpty() ? 0 : 5);
+                m_grid_sizer->Add(label, 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, line.label.IsEmpty() ? 0 : 8);
             else if (!line.label.IsEmpty()) {
                 // If we're here, we have some widget near the label
                 // so we need a horizontal sizer to arrange these things
                 auto sizer = new wxBoxSizer(wxHORIZONTAL);
                 m_grid_sizer->Add(sizer, 0, wxEXPAND | (staticbox ? wxALL : wxBOTTOM | wxTOP | wxLEFT), staticbox ? 0 : 1);
-                sizer->Add(label, 0, (staticbox ? 0 : wxALIGN_RIGHT | wxRIGHT) | wxALIGN_CENTER_VERTICAL, 5);
+                sizer->Add(label, 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, 8);
             }
             if (label != nullptr && line.label_tooltip != "")
                 label->SetToolTip(line.label_tooltip);
@@ -548,9 +567,14 @@ void OptionsGroup::activate_line(Line& line)
 		const auto& field = build_field(option);
 
         if (!custom_ctrl) {
+            const bool toggle = dynamic_cast<CheckBox*>(field.get()) != nullptr;
+            if (toggle)
+                h_sizer->AddStretchSpacer(1);
             if (is_window_field(field))
-                h_sizer->Add(field->getWindow(), option.opt.full_width ? 1 : 0,
-                    wxBOTTOM | wxTOP | (option.opt.full_width ? int(wxEXPAND) : int(wxALIGN_CENTER_VERTICAL)), (wxOSX || !staticbox) ? 0 : 2);
+                h_sizer->Add(field->getWindow(), toggle ? 0 : (option.opt.full_width ? 1 : 0),
+                    toggle ? (wxALIGN_CENTER_VERTICAL | wxALIGN_RIGHT)
+                           : (wxBOTTOM | wxTOP | (option.opt.full_width ? int(wxEXPAND) : int(wxALIGN_CENTER_VERTICAL))),
+                    toggle || wxOSX || !staticbox ? 0 : 2);
             if (is_sizer_field(field))
                 h_sizer->Add(field->getSizer(), 1, (option.opt.full_width ? int(wxEXPAND) : int(wxALIGN_CENTER_VERTICAL)), 0);
         }
@@ -569,8 +593,8 @@ void OptionsGroup::activate_line(Line& line)
                 wxString str_label = (option.label == "Top" || option.label == "Bottom") ?
                     _CTX(option.label, "Layers") :
                     _(option.label);
-                label = new wxStaticText(this->ctrl_parent(), wxID_ANY, str_label + ": ", wxDefaultPosition, //wxDefaultSize);
-                    wxSize(sublabel_width != -1 ? sublabel_width * wxGetApp().em_unit() : -1, -1), wxALIGN_RIGHT);
+                label = new wxStaticText(this->ctrl_parent(), wxID_ANY, str_label, wxDefaultPosition,
+                    wxSize(sublabel_width != -1 ? sublabel_width * wxGetApp().em_unit() : -1, -1), wxALIGN_LEFT);
                 label->SetBackgroundStyle(wxBG_STYLE_PAINT);
                 label->SetFont(wxGetApp().normal_font());
                 h_sizer->Add(label, 0, wxALIGN_CENTER_VERTICAL, 0);
@@ -579,10 +603,13 @@ void OptionsGroup::activate_line(Line& line)
             if (option_set.size() == 1 && option_set.front().opt.full_width)
             {
                 const auto v_sizer = new wxBoxSizer(wxVERTICAL);
-                h_sizer->Add(v_sizer, 1, wxEXPAND);
+                const bool toggle = dynamic_cast<CheckBox*>(field.get()) != nullptr;
+                if (toggle)
+                    h_sizer->AddStretchSpacer(1);
+                h_sizer->Add(v_sizer, toggle ? 0 : 1, toggle ? wxALIGN_CENTER_VERTICAL : wxEXPAND);
                 is_sizer_field(field) ?
                     v_sizer->Add(field->getSizer(), 0, wxEXPAND) :
-                    v_sizer->Add(field->getWindow(), 0, wxEXPAND);
+                    v_sizer->Add(field->getWindow(), 0, toggle ? wxALIGN_RIGHT : wxEXPAND);
                 break;
             }
 

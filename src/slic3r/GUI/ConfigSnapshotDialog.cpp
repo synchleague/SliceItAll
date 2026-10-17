@@ -61,7 +61,7 @@ static wxString generate_html_row(const Config::Snapshot &snapshot, bool row_eve
         text += " (" + wxString::FromUTF8(snapshot.comment.data()) + ")";
     text += "</b></font><br>";
     // End of row header.
-    text += _(L("PrusaSlicer version")) + ": " + snapshot.slic3r_version_captured.to_string() + "<br>";
+    text += format_wxstr(_L("%1% version"), wxString(SLIC3R_APP_NAME)) + ": " + snapshot.slic3r_version_captured.to_string() + "<br>";
     bool has_fff = ! snapshot.print.empty() || ! snapshot.filaments.empty();
     bool has_sla = ! snapshot.sla_print.empty() || ! snapshot.sla_material.empty();
     if (has_fff || ! has_sla) {

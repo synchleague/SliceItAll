@@ -37,6 +37,7 @@ class OG_CustomCtrl :public wxPanel
     wxSize  m_bmp_blinking_sz;
 
     int     m_max_win_width{0};
+    int     m_fitted_width{0};
 
     struct CtrlLine {
         wxCoord           height  { wxDefaultCoord };

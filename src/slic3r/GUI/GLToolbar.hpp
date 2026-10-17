@@ -35,6 +35,7 @@ wxDECLARE_EVENT(EVT_GLTOOLBAR_LAYERSEDITING, SimpleEvent);
 
 wxDECLARE_EVENT(EVT_GLVIEWTOOLBAR_3D, SimpleEvent);
 wxDECLARE_EVENT(EVT_GLVIEWTOOLBAR_PREVIEW, SimpleEvent);
+wxDECLARE_EVENT(EVT_GLVIEWTOOLBAR_ASSEMBLY, SimpleEvent);
 
 class GLToolbarItem
 {
@@ -356,6 +357,7 @@ private:
     int contains_mouse_vertical(const Vec2d& mouse_pos, const GLCanvas3D& parent) const;
 
     void render_background(float left, float top, float right, float bottom, float border_w, float border_h) const;
+    void render_selection_mark(float left, float right, float bottom, float top) const;
     void render_horizontal(const GLCanvas3D& parent);
     void render_vertical(const GLCanvas3D& parent);
 

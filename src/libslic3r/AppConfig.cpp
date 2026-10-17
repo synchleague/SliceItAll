@@ -10,6 +10,7 @@
 #include "Thread.hpp"
 #include "format.hpp"
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 #include <stdexcept>
@@ -38,7 +39,7 @@ static const std::string MODEL_PREFIX = "model:";
 // Thus we will let PrusaSlicer 2.3.2 and couple of follow-up versions to download the version number from an alternate file until the PrusaSlicer 2.3.0/2.3.1
 // are phased out, then we will revert to the original name.
 // For 2.6.0-alpha1 we have switched back to the original. The file should contain data for AppUpdater.cpp
-static const std::string VERSION_CHECK_URL = "https://files.prusa3d.com/wp-content/uploads/repository/PrusaSlicer-settings-master/live/PrusaSlicer.version";
+static const std::string VERSION_CHECK_URL = "https://api.github.com/repos/synchleague/SliceItAll/releases/latest";
 //static const std::string VERSION_CHECK_URL = "https://files.prusa3d.com/wp-content/uploads/repository/PrusaSlicer-settings-master/live/PrusaSlicer.version2";
 // Url to index archive zip that contains latest indicies
 static const std::string INDEX_ARCHIVE_URL= "https://files.prusa3d.com/wp-content/uploads/repository/vendor_indices.zip";
@@ -98,8 +99,8 @@ void AppConfig::set_defaults()
         if (get("associate_stl").empty())
             set("associate_stl", "0");
 
-        if (get("suppress_round_corners").empty())
-            set("suppress_round_corners", "1");
+        if (get("suppress_round_corners").empty() || get("suppress_round_corners") == "1")
+            set("suppress_round_corners", "0");
 #endif // _WIN32
 
         // remove old 'use_legacy_opengl' parameter from this config, if present
@@ -228,8 +229,7 @@ void AppConfig::set_defaults()
     if (get("use_legacy_3DConnexion").empty())
         set("use_legacy_3DConnexion", "0");
 
-    if (get("dark_color_mode").empty())
-        set("dark_color_mode", "0");
+    set("dark_color_mode", "1");
 
     if (get("sys_menu_enabled").empty())
         set("sys_menu_enabled", "1");
@@ -413,7 +413,10 @@ std::string AppConfig::load(const std::string &path)
         // Make 1.40.0 alphas compare well
         ini_ver->set_metadata(boost::none);
         ini_ver->set_prerelease(boost::none);
-        m_legacy_datadir = ini_ver < Semver(1, 40, 0);
+        // PrusaSlicer before 1.40 kept presets without vendor bundles.
+        // Slice it All numbers its own releases from 0.x and already uses the current layout,
+        // so those versions are not that old datadir.
+        m_legacy_datadir = *ini_ver >= Semver(1, 0, 0) && *ini_ver < Semver(1, 40, 0);
     }
 
     // Legacy conversion
@@ -628,10 +631,22 @@ std::vector<std::string> AppConfig::get_recent_projects() const
     const auto it = m_storage.find("recent_projects");
     if (it != m_storage.end())
     {
-        for (const std::map<std::string, std::string>::value_type& item : it->second)
-        {
-            ret.push_back(item.second);
+        std::vector<std::pair<int, std::string>> ordered;
+        ordered.reserve(it->second.size());
+        for (const std::map<std::string, std::string>::value_type& item : it->second) {
+            int index = 0;
+            try {
+                index = std::stoi(item.first);
+            } catch (const std::exception&) {
+                index = 0;
+            }
+            ordered.emplace_back(index, item.second);
         }
+        std::sort(ordered.begin(), ordered.end(), [](const auto& left, const auto& right) {
+            return left.first < right.first;
+        });
+        for (const auto& item : ordered)
+            ret.push_back(item.second);
     }
     return ret;
 }
@@ -752,8 +767,7 @@ std::string AppConfig::config_path() const
 
 std::string AppConfig::version_check_url() const
 {
-    auto from_settings = get("version_check_url");
-    return from_settings.empty() ? VERSION_CHECK_URL : from_settings;
+    return VERSION_CHECK_URL;
 }
 
 std::string AppConfig::index_archive_url() const

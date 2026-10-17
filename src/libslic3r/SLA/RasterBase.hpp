@@ -115,6 +115,11 @@ struct PPMRasterEncoder {
     EncodedRaster operator()(const void *ptr, size_t w, size_t h, size_t num_components);
 };
 
+// Run-length encoder for the Elegoo GOO layer images.
+struct GOORLERasterEncoder {
+    EncodedRaster operator()(const void *ptr, size_t w, size_t h, size_t num_components);
+};
+
 std::ostream& operator<<(std::ostream &stream, const EncodedRaster &bytes);
 
 // If gamma is zero, thresholding will be performed which disables AA.

@@ -201,6 +201,7 @@ void PresetBundle::setup_directories()
         data_dir / "printer", 
         data_dir / "physical_printer" 
 #endif
+        , data_dir / "catalog"
     };
     for (const boost::filesystem::path &path : paths) {
 		boost::filesystem::path subdir = path;
@@ -335,8 +336,45 @@ PresetsConfigSubstitutions PresetBundle::load_presets(AppConfig &config, Forward
     } catch (const std::runtime_error &err) {
         errors_cummulative += err.what();
     }
+    this->load_user_catalog();
     this->update_multi_material_filament_presets();
     this->update_compatible(PresetSelectCompatibleType::Never);
+    // Single-nozzle printers start in multi-filament mode. Real multi-nozzle
+    // machines keep their own extruder offsets and are left alone.
+    auto enable_shared_nozzle_multifilament = [](Preset& preset) {
+        if (!preset.config.has("printer_technology") || !preset.config.has("single_extruder_multi_material"))
+            return;
+        if (preset.config.opt_enum<PrinterTechnology>("printer_technology") != ptFFF)
+            return;
+        bool shared_nozzle = true;
+        if (const auto* offsets = preset.config.option<ConfigOptionPoints>("extruder_offset")) {
+            if (!offsets->values.empty()) {
+                const Vec2d origin = offsets->values.front();
+                for (const Vec2d& offset : offsets->values) {
+                    if ((offset - origin).squaredNorm() > 1.0) {
+                        shared_nozzle = false;
+                        break;
+                    }
+                }
+            }
+        }
+        if (shared_nozzle && !preset.config.opt_bool("single_extruder_multi_material"))
+            preset.config.set_key_value("single_extruder_multi_material", new ConfigOptionBool(true));
+    };
+    for (size_t i = 0; i < this->printers.num_default_presets(); ++i)
+        enable_shared_nozzle_multifilament(this->printers.default_preset(i));
+    for (Preset& preset : this->printers)
+        enable_shared_nozzle_multifilament(preset);
+    // FDM supports start as organic. A print profile the user saved keeps its own style.
+    auto prefer_organic_supports = [](Preset& preset) {
+        if (preset.is_user() || !preset.config.has("support_material_style"))
+            return;
+        preset.config.set_key_value("support_material_style", new ConfigOptionEnum<SupportMaterialStyle>(smsOrganic));
+    };
+    for (size_t i = 0; i < this->prints.num_default_presets(); ++i)
+        prefer_organic_supports(this->prints.default_preset(i));
+    for (Preset& preset : this->prints)
+        prefer_organic_supports(preset);
     if (! errors_cummulative.empty())
         throw Slic3r::RuntimeError(errors_cummulative);
 
@@ -379,12 +417,15 @@ std::pair<PresetsConfigSubstitutions, std::string> PresetBundle::load_system_pre
                     append(substitutions, other.load_configbundle(dir_entry.path().string(), PresetBundle::LoadSystem, compatibility_rule).first);
                     std::vector<std::string> duplicates = this->merge_presets(std::move(other));
                     if (! duplicates.empty()) {
-                        errors_cummulative += "Vendor configuration file " + name + " contains the following presets with names used by other vendors: ";
+                        // The first copy of a shared name is kept. Overlapping template
+                        // filaments must not abort the rest of preset loading.
+                        std::string message = "Vendor configuration file " + name + " contains the following presets with names used by other vendors: ";
                         for (size_t i = 0; i < duplicates.size(); ++ i) {
                             if (i > 0)
-                                errors_cummulative += ", ";
-                            errors_cummulative += duplicates[i];
+                                message += ", ";
+                            message += duplicates[i];
                         }
+                        BOOST_LOG_TRIVIAL(warning) << message;
                     }
                 }
             } catch (const std::runtime_error &err) {
@@ -1530,7 +1571,13 @@ std::pair<PresetsConfigSubstitutions, size_t> PresetBundle::load_configbundle(
             presets = &this->filaments;
             preset_name = section.first.substr(9);
             if (vendor_profile && vendor_profile->templates_profile) {
-                preset_name += " @Template";
+                // Keep the historical suffix for the Prusa Templates bundle so existing
+                // printer profiles that reference "Prusament PLA @Template" still resolve.
+                // Every other template vendor gets its own suffix, otherwise two bundles
+                // that both ship "Sunlu PLA" collapse into one name and preset loading aborts.
+                const std::string suffix = vendor_profile->id == "Templates" ? " @Template" : (" @" + vendor_profile->id);
+                if (!boost::ends_with(preset_name, suffix))
+                    preset_name += suffix;
             }
         } else if (boost::starts_with(section.first, "sla_print:")) {
             presets = &this->sla_prints;
@@ -2091,6 +2138,56 @@ void PresetBundle::export_configbundle(const std::string &path, bool export_syst
     if (export_physical_printers && this->physical_printers.get_selected_idx() >= 0)
         c << "physical_printer = " << this->physical_printers.get_selected_printer_name() << std::endl;
 
+    c.close();
+}
+
+void PresetBundle::export_printer_and_resin_presets(const std::string &path)
+{
+    const Preset &printer = this->printers.get_selected_preset();
+    const Preset &sla_print = this->sla_prints.get_selected_preset();
+    const Preset &material = this->sla_materials.get_selected_preset();
+    auto needs_local_copy = [](const Preset &preset) {
+        return preset.is_default || preset.is_system || preset.is_external;
+    };
+    if (printer.printer_technology() != ptSLA || needs_local_copy(printer) || needs_local_copy(sla_print) || needs_local_copy(material))
+        throw std::runtime_error("Save the SLA printer, print profile, and resin as local presets before exporting them.");
+
+    const PresetWithVendorProfile printer_with_vendor = this->printers.get_preset_with_vendor_profile(printer);
+
+    boost::nowide::ofstream c;
+    c.open(path, std::ios::out | std::ios::trunc);
+    if (!c.good())
+        throw std::runtime_error(std::string("Failed to write ") + path);
+
+    c << "# " << Slic3r::header_slic3r_generated() << std::endl;
+    c << "# Printer and resin presets" << std::endl;
+
+    auto write_preset = [&c](const PresetCollection &presets, const Preset &preset) {
+        c << std::endl << "[" << presets.section_name() << ":" << preset.name << "]" << std::endl;
+        for (const std::string &opt_key : preset.config.keys())
+            c << opt_key << " = " << preset.config.opt_serialize(opt_key) << std::endl;
+    };
+
+    write_preset(this->printers, printer);
+
+    auto write_user_presets = [&](PresetCollection &collection) {
+        const std::string &selected_name = collection.get_selected_preset_name();
+        for (const Preset &preset : collection()) {
+            if (preset.is_default || preset.is_external || preset.is_system)
+                continue;
+            const bool selected = preset.name == selected_name;
+            if (!selected && !is_compatible_with_printer(collection.get_preset_with_vendor_profile(preset), printer_with_vendor))
+                continue;
+            write_preset(collection, preset);
+        }
+    };
+    write_user_presets(this->sla_prints);
+    write_user_presets(this->sla_materials);
+
+    c << std::endl << "[presets]" << std::endl;
+    c << "sla_print = " << sla_print.name << std::endl;
+    c << "sla_material = " << material.name << std::endl;
+    c << "printer = " << printer.name << std::endl;
     c.close();
 }
 

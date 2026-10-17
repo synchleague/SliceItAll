@@ -571,7 +571,7 @@ void PresetArchiveDatabase::load_app_manifest_json()
 				m_selected_repositories_uuid[uuid] = *used;
 			} else {
 				assert(false);
-                m_selected_repositories_uuid[uuid] = true;
+                m_selected_repositories_uuid[uuid] = false;
 			}
             // "has_installed_printers" flag
             if (const auto used = subtree.second.get_optional<bool>("has_installed_printers"); used) {
@@ -763,9 +763,9 @@ void PresetArchiveDatabase::read_server_manifest(const std::string& json_body)
 		}
 		auto id_it = id_to_uuid.find(manifest.id);
 		std::string uuid = (id_it == id_to_uuid.end() ? get_next_uuid() : id_it->second);
-		// Set default selected value to true - its a never before seen repository
+		// A source the user has not chosen yet stays off.
 		if (auto search = m_selected_repositories_uuid.find(uuid); search == m_selected_repositories_uuid.end()) {
-			m_selected_repositories_uuid[uuid] = true;
+			m_selected_repositories_uuid[uuid] = false;
 		}
         // Set default "has installed printers" value to false - its a never before seen repository
         if (auto search = m_has_installed_printer_repositories_uuid.find(uuid);

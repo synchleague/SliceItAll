@@ -9,7 +9,13 @@
 
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/GUI_ObjectManipulation.hpp"
+#include "slic3r/GUI/ImGuiWrapper.hpp"
 #include "slic3r/GUI/Plater.hpp"
+
+#include <imgui/imgui_internal.h>
+
+#include <cmath>
+#include <unordered_map>
 
 // TODO: Display tooltips quicker on Linux
 
@@ -315,6 +321,35 @@ void GLGizmoBase::set_dirty() {
 }
 
 
+
+void GLGizmoBase::place_input_window(const std::string& name, float x, float& y, float bottom_limit)
+{
+    static std::unordered_map<std::string, bool> dragged;
+    static std::unordered_map<std::string, float> heights;
+
+    const float win_h = std::max(1.f, ImGui::GetWindowHeight());
+    const float margin = 8.f;
+    const float fitted = std::min(y, std::max(margin, bottom_limit - win_h - margin));
+    bool& moved = dragged[name];
+    // A title-bar drag makes the window move id active. Forcing the default
+    // position after that draws the frame at the cursor and the controls at
+    // the old spot, then snaps the frame back on release.
+    const ImGuiContext& imgui = *GImGui;
+    const bool moving_window = imgui.MovingWindow != nullptr && imgui.MovingWindow == imgui.CurrentWindow;
+    if (moving_window && ImLengthSqr(imgui.IO.MouseDelta) > 0.f)
+        moved = true;
+    if (!moved) {
+        y = fitted;
+        ImGui::SetWindowPos(ImVec2(x, y), ImGuiCond_Always);
+    }
+
+    float& known = heights[name];
+    if (std::abs(known - win_h) > 1.f) {
+        known = win_h;
+        if (ImGuiWrapper* imgui = wxGetApp().imgui())
+            imgui->set_requires_extra_frame();
+    }
+}
 
 void GLGizmoBase::render_input_window(float x, float y, float bottom_limit)
 {

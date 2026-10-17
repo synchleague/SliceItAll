@@ -10,12 +10,17 @@
 
 #include <vector>
 #include <set>
+#include <map>
 #include <unordered_map>
 #include <functional>
+#include <memory>
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
 
+#include <wx/checkbox.h>
 #include <wx/panel.h>
+#include <wx/textctrl.h>
+#include <wx/scrolwin.h>
 #include <wx/button.h>
 #include <wx/choice.h>
 #include <wx/spinctrl.h>
@@ -191,7 +196,14 @@ struct PageUpdateManager : ConfigWizardPage
     wxStaticText*                               warning_text    { nullptr };
     bool                                        is_active       { false };
 
+    struct SourceToggle {
+        wxWindow*                box{ nullptr };
+        std::vector<std::string> ids;
+    };
+    std::vector<SourceToggle> source_toggles;
+
     PageUpdateManager(ConfigWizard* parent);
+    void store_selection();
 };
 
 struct PagePrinters: ConfigWizardPage
@@ -204,7 +216,8 @@ struct PagePrinters: ConfigWizardPage
         wxString title,
         wxString shortname,
         const VendorProfile &vendor,
-        unsigned indent, Technology technology);
+        unsigned indent, Technology technology,
+        const std::string &only_model_id = std::string());
 
     void select_all(bool select, bool alternates = false);
     int get_width() const;
@@ -221,6 +234,88 @@ struct PagePrinters: ConfigWizardPage
 
     bool has_printers { false };
     bool is_primary_printer_page { false };
+};
+
+// One page per company. FDM and DLP models are listed separately.
+// Checking a model opens a configuration subpage for that printer.
+struct PageCompanyPrinters : ConfigWizardPage
+{
+    const VendorProfile* vendor{ nullptr };
+    bool install{ false };
+
+    struct ModelEntry {
+        wxCheckBox*       box{ nullptr };
+        std::string       model_id;
+        PrinterTechnology technology{ ptFFF };
+        PagePrinters*     page{ nullptr };
+    };
+    std::vector<ModelEntry> models;
+
+    std::vector<const VendorProfile*> vendors;
+
+    PageCompanyPrinters(ConfigWizard* parent, const wxString& name, const std::vector<const VendorProfile*>& vendors);
+};
+
+// Network devices for the printers chosen on the company pages.
+struct PageDevices : ConfigWizardPage
+{
+    wxScrolledWindow* scroll{ nullptr };
+    wxBoxSizer*       rows{ nullptr };
+
+    struct Fields {
+        std::string     model_id;
+        PrinterTechnology technology{ ptFFF };
+        wxCheckBox*     enable{ nullptr };
+        wxTextCtrl*     name{ nullptr };
+        wxTextCtrl*     host{ nullptr };
+        wxChoice*       host_type{ nullptr };
+        wxTextCtrl*     apikey{ nullptr };
+        wxStaticText*   hint{ nullptr };
+        wxButton*       test{ nullptr };
+        wxStaticText*   status{ nullptr };
+        wxStaticText*   detail{ nullptr };
+        wxCheckBox*     show_raw{ nullptr };
+        wxTextCtrl*     raw{ nullptr };
+        int             tone{ 0 };
+        // File name of a printer already saved. Empty for a row added in this visit.
+        std::string     existing_name;
+    };
+    std::vector<Fields> fields;
+
+    struct Memory {
+        bool     enable{ true };
+        wxString name;
+        wxString host;
+        wxString apikey;
+        int      host_type{ 0 };
+        int      tone{ 0 };
+        wxString status;
+        wxString detail;
+        wxString raw;
+        bool     show_raw{ false };
+        std::string existing_name;
+        PrinterTechnology technology{ ptFFF };
+    };
+    std::map<std::string, std::vector<Memory>> memory;
+    // Printers the user removed. Deleted when the wizard is saved, not before.
+    std::vector<std::string> removed;
+    // Models whose last device was removed, so a blank row is not put back.
+    std::set<std::string> suppressed;
+    bool saved_loaded{ false };
+    std::shared_ptr<bool> alive { std::make_shared<bool>(true) };
+
+    PageDevices(ConfigWizard* parent);
+    ~PageDevices() override;
+    void rebuild();
+    void remember_fields();
+    void render();
+    void add_device(const std::string& model_id);
+    void remove_device(const std::string& model_id, size_t index);
+    void test_connection(size_t index);
+    void ensure_saved_loaded();
+    bool has_devices() const;
+    void save_into(PresetBundle* bundle);
+    virtual void on_activate() override { rebuild(); }
 };
 
 // Here we extend wxListBox and wxCheckListBox
@@ -389,7 +484,7 @@ struct Materials
             if (((printer == nullptr && printer_name == PageMaterials::EMPTY) || (printer != nullptr && is_compatible_with_printer(PresetWithVendorProfile(prst, prst.vendor), PresetWithVendorProfile(prntr, prntr.vendor)))) &&
                 (type.empty() || get_type(preset) == type) &&
                 (vendor.empty() || get_vendor(preset) == vendor) &&
-                prst.vendor && !prst.vendor->templates_profile) {
+                prst.vendor) {
 
                 cb(preset);
             }
@@ -487,7 +582,7 @@ struct PageMode: ConfigWizardPage
 
 struct PageVendors: ConfigWizardPage
 {
-    PageVendors(ConfigWizard *parent, std::string repos_id = std::string(), std::string name = std::string());
+    PageVendors(ConfigWizard *parent, std::string repos_id = std::string(), std::string name = std::string(), bool all_companies = false);
 };
 
 struct PageFirmware: ConfigWizardPage
@@ -585,7 +680,7 @@ private:
     ssize_t item_hover;
     size_t last_page;
 
-    int item_height() const { return std::max(bullet_black.GetHeight(), em_w) + em_w; }
+    int item_height() const { return em_h + em_w; }
 
     void on_paint(wxPaintEvent &evt);
     void on_mouse_move(wxMouseEvent &evt);
@@ -636,6 +731,7 @@ struct ConfigWizard::priv
     ConfigWizardWebViewPage *page_login = nullptr;
     PageUpdateManager*page_update_manager = nullptr;
     PageMaterials    *page_filaments = nullptr;
+    PageDevices      *page_devices = nullptr;
     PageMaterials    *page_sla_materials = nullptr;
     PageCustom       *page_custom = nullptr;
     PageUpdate* page_update = nullptr;
@@ -655,6 +751,8 @@ struct ConfigWizard::priv
 
     std::vector<PagePrinters*>  pages_fff;
     std::vector<PagePrinters*>  pages_msla;
+    // Vendor profile ids turned on from the Configuration sources page.
+    std::set<std::string>       enabled_source_ids;
 
     struct Repository {
         bool operator==(const std::string& other_id_name) const { return other_id_name == this->id_name; }
@@ -662,6 +760,7 @@ struct ConfigWizard::priv
         std::string     id_name;
         PageVendors*    vendors_page{ nullptr };
         Pages3rdparty   printers_pages;
+        std::map<std::string, PageCompanyPrinters*> company_pages;
     };
     std::vector<Repository>     repositories;
 
@@ -686,9 +785,17 @@ struct ConfigWizard::priv
     void add_page(ConfigWizardPage *page);
     void enable_next(bool enable);
     void set_start_page(ConfigWizard::StartPage start_page);
-    void create_vendor_printers_page(const std::string& repo_id, const VendorProfile* vendor, bool install = false, bool from_single_vendor_repo = false);
+    void create_vendor_printers_page(const std::string& repo_id, const std::vector<const VendorProfile*>& vendors, bool install = false, bool from_single_vendor_repo = false);
     void set_run_reason(RunReason run_reason);
     void update_materials(Technology technology);
+
+    struct SelectedMachine {
+        std::string       model_id;
+        std::string       vendor;
+        std::string       model_name;
+        PrinterTechnology technology{ ptFFF };
+    };
+    std::vector<SelectedMachine> selected_machines() const;
 
     void on_custom_setup(const bool custom_wanted);
     void on_printer_pick(PagePrinters *page, const PrinterPickerEvent &evt);

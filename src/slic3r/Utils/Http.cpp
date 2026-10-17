@@ -78,12 +78,13 @@ struct CurlGlobalInit
             }
 
             if (!bundle)
-                message = _u8L("Could not detect system SSL certificate store. "
-                               "PrusaSlicer will be unable to establish secure "
-                               "network connections.");
+                message = Slic3r::format(_u8L("Could not detect system SSL certificate store. "
+                               "%1% will be unable to establish secure "
+                               "network connections."), SLIC3R_APP_NAME);
             else
                 message = Slic3r::GUI::format(
-					_L("PrusaSlicer detected system SSL certificate store in: %1%"),
+					_L("%1% detected system SSL certificate store in: %2%"),
+                    SLIC3R_APP_NAME,
                     bundle);
 
             message += "\n" + Slic3r::GUI::format(
@@ -96,8 +97,8 @@ struct CurlGlobalInit
 #endif // OPENSSL_CERT_OVERRIDE
 
         if (CURLcode ec = ::curl_global_init(CURL_GLOBAL_DEFAULT)) {
-            message += _u8L("CURL init has failed. PrusaSlicer will be unable to establish "
-                            "network connections. See logs for additional details.");
+            message += Slic3r::format(_u8L("CURL init has failed. %1% will be unable to establish "
+                            "network connections. See logs for additional details."), SLIC3R_APP_NAME);
 
             BOOST_LOG_TRIVIAL(error) << ::curl_easy_strerror(ec);
         }
@@ -126,6 +127,7 @@ struct Http::priv
 	// Using a deque here because unlike vector it doesn't ivalidate pointers on insertion
 	std::deque<fs::ifstream> form_files;
 	std::string postfields;
+	bool post_body_set;
 	std::string error_buffer;    // Used for CURLOPT_ERRORBUFFER
 	size_t limit;
 	bool cancel;
@@ -167,6 +169,7 @@ Http::priv::priv(const std::string &url)
 	, form(nullptr)
 	, form_end(nullptr)
 	, headerlist(nullptr)
+	, post_body_set(false)
 	, error_buffer(CURL_ERROR_SIZE + 1, '\0')
 	, limit(0)
 	, cancel(false)
@@ -316,11 +319,13 @@ void Http::priv::set_post_body(const fs::path &path)
 	boost::nowide::ifstream file(path.string());
 	std::string file_content { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
 	postfields = std::move(file_content);
+	post_body_set = true;
 }
 
 void Http::priv::set_post_body(const std::string &body)
 {
 	postfields = body;
+	post_body_set = true;
 }
 
 void Http::priv::set_put_body(const fs::path &path)
@@ -399,9 +404,11 @@ void Http::priv::http_perform(const HttpRetryOpt& retry_opts)
 		::curl_easy_setopt(curl, CURLOPT_HTTPPOST, form);
 	}
 
-	if (!postfields.empty()) {
+	if (post_body_set) {
+		// An empty body must still set the size. Otherwise curl sends a chunked
+		// POST, and printers that only accept Content-Length answer HTTP 400.
 		::curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postfields.c_str());
-		::curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, postfields.size());
+		::curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(postfields.size()));
 	}
 
     bool retry;

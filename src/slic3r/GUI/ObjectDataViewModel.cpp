@@ -118,6 +118,14 @@ ObjectDataViewModelNode::ObjectDataViewModelNode(ObjectDataViewModelNode* parent
 {
 }
 
+ObjectDataViewModelNode::ObjectDataViewModelNode(const wxString& plate_name, int bed_idx)
+    : m_parent(nullptr)
+    , m_name(plate_name)
+    , m_type(itPlate)
+    , m_idx(bed_idx)
+    , m_container(true)
+{
+}
 
 ObjectDataViewModelNode::ObjectDataViewModelNode(ObjectDataViewModelNode* parent, const ItemType type) :
     m_parent(parent),
@@ -392,8 +400,101 @@ ObjectDataViewModel::~ObjectDataViewModel()
 {
     for (auto object : m_objects)
 			delete object;
+    clear_plate_nodes();
     delete m_bitmap_cache;
     m_bitmap_cache = nullptr;
+}
+
+void ObjectDataViewModel::clear_plate_nodes()
+{
+    for (ObjectDataViewModelNode* plate : m_plate_nodes)
+        delete plate;
+    m_plate_nodes.clear();
+}
+
+wxDataViewItem ObjectDataViewModel::plate_item(const ObjectDataViewModelNode* object) const
+{
+    if (!m_grouped || !object)
+        return wxDataViewItem(0);
+    for (ObjectDataViewModelNode* plate : m_plate_nodes)
+        if (plate && plate->m_idx == object->m_plate_bed)
+            return wxDataViewItem((void*)plate);
+    if (!m_plate_nodes.empty())
+        return wxDataViewItem((void*)m_plate_nodes.front());
+    return wxDataViewItem(0);
+}
+
+bool ObjectDataViewModel::set_plate_groups(const std::vector<int>& beds, int bed_count)
+{
+    if (beds.size() != m_objects.size())
+        return false;
+
+    const bool want = bed_count > 1;
+    if (!want) {
+        if (!m_grouped)
+            return false;
+        m_grouped = false;
+        for (ObjectDataViewModelNode* object : m_objects)
+            object->m_plate_bed = 0;
+        clear_plate_nodes();
+        Cleared();
+        return true;
+    }
+
+    const bool same_plates = m_grouped && int(m_plate_nodes.size()) == bed_count;
+    if (!same_plates) {
+        clear_plate_nodes();
+        m_grouped = true;
+        for (int bed = 0; bed < bed_count; ++bed) {
+            const wxString name = _L("Build plate") + wxString::Format(" %d", bed + 1);
+            m_plate_nodes.push_back(new ObjectDataViewModelNode(name, bed));
+        }
+        for (size_t i = 0; i < m_objects.size(); ++i) {
+            int bed = beds[i];
+            if (bed < 0 || bed >= bed_count)
+                bed = 0;
+            m_objects[i]->m_plate_bed = bed;
+        }
+        Cleared();
+        if (m_ctrl) {
+            wxDataViewCtrl* ctrl = m_ctrl;
+            ObjectDataViewModel* self = this;
+            ctrl->CallAfter([ctrl, self] {
+                wxDataViewItemArray plates;
+                self->GetChildren(wxDataViewItem(0), plates);
+                for (const wxDataViewItem& plate : plates)
+                    ctrl->Expand(plate);
+            });
+        }
+        return true;
+    }
+
+    bool moved = false;
+    for (size_t i = 0; i < m_objects.size(); ++i) {
+        int bed = beds[i];
+        if (bed < 0 || bed >= bed_count)
+            bed = 0;
+        ObjectDataViewModelNode* object = m_objects[i];
+        if (object->m_plate_bed == bed)
+            continue;
+        const wxDataViewItem item((void*)object);
+        ItemDeleted(plate_item(object), item);
+        object->m_plate_bed = bed;
+        const wxDataViewItem plate = plate_item(object);
+        ItemAdded(plate, item);
+        AddAllChildren(item);
+        if (m_ctrl && plate.IsOk())
+            m_ctrl->Expand(plate);
+        moved = true;
+    }
+    return moved;
+}
+
+int ObjectDataViewModel::GetPlateIndex(const wxDataViewItem& item) const
+{
+    if (GetItemType(item) != itPlate)
+        return -1;
+    return static_cast<ObjectDataViewModelNode*>(item.GetID())->GetIdx();
 }
 
 void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode* node)
@@ -455,7 +556,7 @@ wxDataViewItem ObjectDataViewModel::AddObject(const wxString &name,
     m_objects.push_back(root);
 	// notify control
 	wxDataViewItem child((void*)root);
-	wxDataViewItem parent((void*)NULL);
+	wxDataViewItem parent = plate_item(root);
 
 	ItemAdded(parent, child);
 	return child;
@@ -864,6 +965,9 @@ wxDataViewItem ObjectDataViewModel::Delete(const wxDataViewItem &item)
 			ret_item = wxDataViewItem(m_objects[id]);
 		}
 	}
+	if (!parent.IsOk() && node->m_type == itObject)
+        parent = plate_item(node);
+
 	// free the node
 	delete node;
 
@@ -1244,8 +1348,12 @@ void ObjectDataViewModel::GetItemInfo(const wxDataViewItem& item, ItemType& type
     if (!parent_node) return;
 
     // get top parent (Object) node
-    while (parent_node->m_type != itObject)
+    while (parent_node && parent_node->m_type != itObject)
         parent_node = parent_node->GetParent();
+    if (!parent_node) {
+        type = itUndef;
+        return;
+    }
 
     auto it = find(m_objects.begin(), m_objects.end(), parent_node);
     if (it != m_objects.end())
@@ -1351,6 +1459,13 @@ void ObjectDataViewModel::GetValue(wxVariant &variant, const wxDataViewItem &ite
 	wxASSERT(item.IsOk());
 
 	ObjectDataViewModelNode *node = static_cast<ObjectDataViewModelNode*>(item.GetID());
+    if (node->GetType() == itPlate) {
+        if (col == colName)
+            variant << DataViewBitmapText(node->m_name, wxNullBitmap);
+        else
+            variant << wxNullBitmap;
+        return;
+    }
 	switch (col)
 	{
 	case colPrint:
@@ -1482,11 +1597,12 @@ wxDataViewItem ObjectDataViewModel::ReorganizeObjects(  const int current_id, co
         return wxDataViewItem(nullptr);
 
     ObjectDataViewModelNode* deleted_node = m_objects[current_id];
+    const wxDataViewItem plate = plate_item(deleted_node);
     m_objects.erase(m_objects.begin() + current_id);
-    ItemDeleted(wxDataViewItem(nullptr), wxDataViewItem(deleted_node));
+    ItemDeleted(plate, wxDataViewItem(deleted_node));
 
     m_objects.emplace(m_objects.begin() + new_id, deleted_node);
-    ItemAdded(wxDataViewItem(nullptr), wxDataViewItem(deleted_node));
+    ItemAdded(plate, wxDataViewItem(deleted_node));
 
     // If some item has a children, just to add a deleted item is not enough on Linux 
     // We should to add all its children separately
@@ -1495,11 +1611,25 @@ wxDataViewItem ObjectDataViewModel::ReorganizeObjects(  const int current_id, co
     return wxDataViewItem(deleted_node);
 }
 
+bool ObjectDataViewModel::GetAttr(const wxDataViewItem &item, unsigned int col, wxDataViewItemAttr &attr) const
+{
+    if (!item.IsOk() || col != colName)
+        return false;
+    const ObjectDataViewModelNode *node = static_cast<ObjectDataViewModelNode*>(item.GetID());
+    if (!node || node->m_type != itPlate)
+        return false;
+    attr.SetBold(true);
+    attr.SetColour(wxColour(250, 250, 250));
+    return true;
+}
+
 bool ObjectDataViewModel::IsEnabled(const wxDataViewItem &item, unsigned int col) const
 {
     wxASSERT(item.IsOk());
     ObjectDataViewModelNode *node = static_cast<ObjectDataViewModelNode*>(item.GetID());
 
+    if (node->m_type == itPlate)
+        return false;
     // disable extruder selection for the non "itObject|itVolume" item
     return !(col == colExtruder && node->m_extruder.IsEmpty());
 }
@@ -1513,9 +1643,11 @@ wxDataViewItem ObjectDataViewModel::GetParent(const wxDataViewItem &item) const
 	ObjectDataViewModelNode *node = static_cast<ObjectDataViewModelNode*>(item.GetID());
 	assert(node != nullptr && node->valid());
 
-	// objects nodes has no parent too
+    if (node->m_type == itPlate)
+        return wxDataViewItem(0);
+    // Objects sit under a build-plate row when more than one plate is in use.
     if (node->m_type == itObject)
-		return wxDataViewItem(0);
+        return plate_item(node);
 
 	return wxDataViewItem((void*)node->GetParent());
 }
@@ -1527,12 +1659,14 @@ wxDataViewItem ObjectDataViewModel::GetTopParent(const wxDataViewItem &item) con
 		return wxDataViewItem(0);
 
 	ObjectDataViewModelNode *node = static_cast<ObjectDataViewModelNode*>(item.GetID());
-    if (node->m_type == itObject)
+    if (node->m_type == itObject || node->m_type == itPlate)
         return item;
 
     ObjectDataViewModelNode *parent_node = node->GetParent();
-    while (parent_node->m_type != itObject)
+    while (parent_node && parent_node->m_type != itObject)
         parent_node = parent_node->GetParent();
+    if (!parent_node)
+        return item;
 
     return wxDataViewItem((void*)parent_node);
 }
@@ -1552,10 +1686,26 @@ unsigned int ObjectDataViewModel::GetChildren(const wxDataViewItem &parent, wxDa
 	ObjectDataViewModelNode *node = static_cast<ObjectDataViewModelNode*>(parent.GetID());
 	if (!node)
 	{
+        if (m_grouped) {
+            for (ObjectDataViewModelNode* plate : m_plate_nodes)
+                array.Add(wxDataViewItem((void*)plate));
+            return m_plate_nodes.size();
+        }
 		for (auto object : m_objects)
 			array.Add(wxDataViewItem((void*)object));
 		return m_objects.size();
 	}
+
+    if (node->m_type == itPlate) {
+        unsigned int count = 0;
+        for (ObjectDataViewModelNode* object : m_objects) {
+            if (object->m_plate_bed != node->m_idx)
+                continue;
+            array.Add(wxDataViewItem((void*)object));
+            ++count;
+        }
+        return count;
+    }
 
 	if (node->GetChildCount() == 0)
 	{

@@ -1,74 +1,52 @@
+![Slice it All](resources/icons/SliceItAll_192px.png)
 
-![PrusaSlicer logo](/resources/icons/PrusaSlicer.png?raw=true)
+# Slice it All
 
-# PrusaSlicer
+Slice it All is a free 3D slicer with one goal: work for everyone, and for everything they print.
 
-You may want to check the [PrusaSlicer project page](https://www.prusa3d.com/prusaslicer/).
-Prebuilt Windows, OSX and Linux binaries are available through the [git releases page](https://github.com/prusa3d/PrusaSlicer/releases) or from the [Prusa3D downloads page](https://www.prusa3d.com/drivers/). There are also [3rd party Linux builds available](https://github.com/prusa3d/PrusaSlicer/wiki/PrusaSlicer-on-Linux---binary-distributions).
+People print on machines from every workshop and every brand. They print with filament and with resin. Some printers sit on the network, and some never connect to anything. Slice it All is the slicer for all of them. One program prepares the print, and the file you get is yours.
 
-PrusaSlicer takes 3D models (STL, OBJ, AMF) and converts them into G-code
-instructions for FFF printers or PNG layers for mSLA 3D printers. It's
-compatible with any modern printer based on the RepRap toolchain, including all
-those based on the Marlin, Prusa, Sprinter and Repetier firmware. It also works
-with Mach3, LinuxCNC and Machinekit controllers.
+It is free software. Free to download, free to use on as many computers as you like, and free to study and improve. The license is the GNU Affero General Public License, version 3, which keeps those freedoms attached to the program.
 
-PrusaSlicer is based on [Slic3r](https://github.com/Slic3r/Slic3r) by Alessandro Ranellucci and the RepRap community.
+## Install
 
-See the [project homepage](https://www.prusa3d.com/slic3r-prusa-edition/) and
-the [documentation directory](doc/) for more information.
+The Windows installer for version 0.9.0 is on the [release page](https://github.com/synchleague/SliceItAll/releases/tag/v0.9.0).
 
-### What language is it written in?
+Run `SliceItAll-0.9.0-win64-setup.exe`. It installs Slice it All, adds a Start menu entry, and can add a desktop shortcut. Uninstall it from Windows Settings whenever you want.
 
-All user facing code is written in C++.
-The slicing core is the `libslic3r` library, which can be built and used in a standalone way.
-The command line interface is a thin wrapper over `libslic3r`.
+`SliceItAll-console.exe` is installed beside the app and slices from the command line.
 
-### What are PrusaSlicer's main features?
+## Printing
 
-Key features are:
+- Load STL, OBJ, 3MF, and STEP models.
+- Slice for filament printers and for resin printers.
+- Start from a printer profile, or describe a machine yourself.
+- Preview toolpaths and resin layers before you export.
+- Save G-code for filament printers, and the layer file a resin printer expects.
+- Keep working when the printer is offline. Slice it All will still write the file.
 
-* **multi-platform** (Linux/Mac/Win) and packaged as standalone-app with no dependencies required
-* complete **command-line interface** to use it with no GUI
-* multi-material **(multiple extruders)** object printing
-* multiple G-code flavors supported (RepRap, Makerbot, Mach3, Machinekit etc.)
-* ability to plate **multiple objects having distinct print settings**
-* **multithread** processing
-* **STL auto-repair** (tolerance for broken models)
-* wide automated unit testing
+## The idea
 
-Other major features are:
+A slicer is a tool for making a physical thing. It should be available to anyone with a printer, and it should speak the language of that printer, whoever built it. Slice it All is that tool: universal, and free.
 
-* combine infill every 'n' perimeters layer to speed up printing
-* **3D preview** (including multi-material files)
-* **multiple layer heights** in a single print
-* **spiral vase** mode for bumpless vases
-* fine-grained configuration of speed, acceleration, extrusion width
-* several infill patterns including honeycomb, spirals, Hilbert curves
-* support material, raft, brim, skirt
-* **standby temperature** and automatic wiping for multi-extruder printing
-* [customizable **G-code macros**](https://github.com/prusa3d/PrusaSlicer/wiki/PrusaSlicer-Macro-Language) and output filename with variable placeholders
-* support for **post-processing scripts**
-* **cooling logic** controlling fan speed and dynamic print speed
+## Where it comes from
 
-### Development
+Slice it All is built on [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) by Prusa Research, which is built on [Slic3r](https://github.com/Slic3r/Slic3r) by Alessandro Ranellucci and the RepRap community.
 
-If you want to compile the source yourself, follow the instructions on one of
-these documentation pages:
-* [Linux](doc/How%20to%20build%20-%20Linux%20et%20al.md)
-* [macOS](doc/How%20to%20build%20-%20Mac%20OS.md)
-* [Windows](doc/How%20to%20build%20-%20Windows.md)
+## License
 
-### Can I help?
+[GNU Affero General Public License, version 3](LICENSE).
 
-Sure! You can do the following to find things that are available to help with:
-* Add an [issue](https://github.com/prusa3d/PrusaSlicer/issues) to the github tracker if it isn't already present.
-* Look at [issues labeled "volunteer needed"](https://github.com/prusa3d/PrusaSlicer/issues?utf8=%E2%9C%93&q=is%3Aopen+is%3Aissue+label%3A%22volunteer+needed%22)
+## Building from source
 
-### What's PrusaSlicer license?
+- [Windows](doc/How%20to%20build%20-%20Windows.md)
+- [Linux](doc/How%20to%20build%20-%20Linux%20et%20al.md)
+- [macOS](doc/How%20to%20build%20-%20Mac%20OS.md)
 
-PrusaSlicer is licensed under the _GNU Affero General Public License, version 3_.
-The PrusaSlicer is originally based on Slic3r by Alessandro Ranellucci.
+The Windows installer is built with Inno Setup. From the repository root:
 
-### How can I use PrusaSlicer from the command line?
+```
+powershell -ExecutionPolicy Bypass -File packaging\windows\package.ps1
+```
 
-Please refer to the [Command Line Interface](https://github.com/prusa3d/PrusaSlicer/wiki/Command-Line-Interface) wiki page.
+That writes `dist\SliceItAll-0.9.0-win64-setup.exe`.

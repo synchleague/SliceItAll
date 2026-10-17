@@ -493,8 +493,8 @@ int GLVolumeCollection::load_object_volume(
             v.extruder_id = extruder_id;
     }
     v.is_modifier = !model_volume->is_model_part();
-    v.shader_outside_printer_detection_enabled = model_volume->is_model_part();
-    v.set_instance_transformation(instance->get_transformation());
+    v.shader_outside_printer_detection_enabled = model_volume->is_model_part() && !m_assembly_view;
+    v.set_instance_transformation(m_assembly_view ? instance->get_assemble_view_transformation() : instance->get_transformation());
     v.set_volume_transformation(model_volume->get_transformation());
 
     return int(this->volumes.size() - 1);
@@ -647,8 +647,8 @@ void GLVolumeCollection::load_object_auxiliary(
         if (convex_hull.has_value())
             v.set_convex_hull(*convex_hull);
         v.is_modifier = false;
-        v.shader_outside_printer_detection_enabled = (step == slaposSupportTree || step == slaposDrillHoles);
-        v.set_instance_transformation(model_instance.get_transformation());
+        v.shader_outside_printer_detection_enabled = !m_assembly_view && (step == slaposSupportTree || step == slaposDrillHoles);
+        v.set_instance_transformation(m_assembly_view ? model_instance.get_assemble_view_transformation() : model_instance.get_transformation());
     };
  
     if (milestone == SLAPrintObjectStep::slaposDrillHoles) {
@@ -785,7 +785,11 @@ void GLVolumeCollection::render(GLVolumeCollection::ERenderType type, bool disab
     // default extruder idx and timestamp of the painted data. The data belonging to objects
     // // which no longer exist are removed from the cache periodically.
     const ModelObjectPtrs& model_objects = GUI::wxGetApp().model().objects;
-    const std::vector<ColorRGBA> extruders_colors = GUI::wxGetApp().plater()->get_extruder_colors_from_plater_config();
+    std::vector<ColorRGBA> extruders_colors = GUI::wxGetApp().plater()->get_extruder_colors_from_plater_config();
+    if (extruders_colors.empty())
+        extruders_colors.emplace_back(ColorRGBA{ 0.55f, 0.55f, 0.55f, 1.f });
+    if (extruders_colors.size() == 1)
+        extruders_colors.emplace_back(ColorRGBA{ 0.996f, 0.196f, 0.678f, 1.f });
     const bool is_render_as_mmu_painted_enabled = !model_objects.empty() && !extruders_colors.empty();
 
     if (m_mm_paint_cache.extruders_colors != extruders_colors) {
@@ -993,28 +997,22 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig* con
     }
     else {
         const ConfigOptionStrings* extruders_opt = dynamic_cast<const ConfigOptionStrings*>(config->option("extruder_colour"));
-        if (extruders_opt == nullptr)
-            return;
-
         const ConfigOptionStrings* filamemts_opt = dynamic_cast<const ConfigOptionStrings*>(config->option("filament_colour"));
-        if (filamemts_opt == nullptr)
-            return;
-
-        size_t colors_count = std::max(extruders_opt->values.size(), filamemts_opt->values.size());
+        const size_t extruder_count = extruders_opt ? extruders_opt->values.size() : 0;
+        const size_t filament_count = filamemts_opt ? filamemts_opt->values.size() : 0;
+        size_t colors_count = std::max(extruder_count, filament_count);
         if (colors_count == 0)
             return;
         colors.resize(colors_count);
 
         for (unsigned int i = 0; i < colors_count; ++i) {
-            const std::string& ext_color = config->opt_string("extruder_colour", i);
+            const std::string fil_color = (filamemts_opt && i < filament_count) ? filamemts_opt->values[i] : std::string();
+            const std::string ext_color = (extruders_opt && i < extruder_count) ? extruders_opt->values[i] : std::string();
             ColorRGB rgb;
-            if (decode_color(ext_color, rgb))
+            if (decode_color(fil_color, rgb))
+                colors[i] = { fil_color, rgb };
+            else if (decode_color(ext_color, rgb))
                 colors[i] = { ext_color, rgb };
-            else {
-                const std::string& fil_color = config->opt_string("filament_colour", i);
-                if (decode_color(fil_color, rgb))
-                    colors[i] = { fil_color, rgb };
-            }
         }
     }
 

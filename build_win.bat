@@ -34,12 +34,12 @@
 @ECHO                  deps-dirty - build deps without cleaning
 @ECHO                Default: %PS_STEPS_DEFAULT%
 @ECHO  -r -RUN       Specifies what to perform at the run step:
-@ECHO                  console - run and wait on prusa-slicer-console.exe
+@ECHO                  console - run and wait on SliceItAll-console.exe
 @ECHO                  custom - run and wait on your custom build/%PS_CUSTOM_RUN_FILE%
 @ECHO                  ide - open project in Visual Studio if not open (no wait)
 @ECHO                  none - run step does nothing
-@ECHO                  viewer - run prusa-gcodeviewer.exe (no wait)
-@ECHO                  window - run prusa-slicer.exe (no wait)
+@ECHO                  viewer - run SliceItAll-gcodeviewer.exe (no wait)
+@ECHO                  window - run SliceItAll.exe (no wait)
 @ECHO                Default: none
 @ECHO  -d -DESTDIR   Deps destination directory
 @ECHO                Warning: Changing destdir path will not delete the old destdir.
@@ -73,9 +73,9 @@ REM new minimum version and setting PS_VERSION_EXCEEDED to the maximum supported
 REM version plus one.
 REM The officially supported toolchain versions are:
 REM   Minimum: 16 (Visual Studio 2019)
-REM   Maximum: 17 (Visual Studio 2022)
+REM   Maximum: 18 (Visual Studio 2026)
 SET PS_VERSION_SUPPORTED=16
-SET PS_VERSION_EXCEEDED=18
+SET PS_VERSION_EXCEEDED=19
 SET VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe
 IF NOT EXIST "%VSWHERE%" SET VSWHERE=%ProgramFiles%\Microsoft Visual Studio\Installer\vswhere.exe
 FOR /F "tokens=4 USEBACKQ delims=." %%I IN (`"%VSWHERE%" -nologo -property productId`) DO SET PS_PRODUCT_DEFAULT=%%I
@@ -175,6 +175,8 @@ IF NOT EXIST "%MSVC_DIR%" (
 )
 REM Cmake always defaults to latest supported MSVC generator. Let's make sure it uses what we select.
 FOR /F "tokens=* USEBACKQ" %%I IN (`^""%VSWHERE%" %MSVC_FILTER% -nologo -property catalog_productLineVersion^"`) DO SET PS_PRODUCT_VERSION=%%I
+REM VS 2026 reports productLineVersion as 18. CMake's generator name is "Visual Studio 18 2026".
+IF "%PS_PRODUCT_VERSION%"=="18" SET PS_PRODUCT_VERSION=2026
 
 REM Give the user a chance to cancel if we found something odd.
 IF "%PS_ASK_TO_CONTINUE%" EQU "" GOTO :BUILD_ENV
@@ -198,6 +200,9 @@ SET PS_CURRENT_STEP=environment
 SET CMAKE_GENERATOR=Visual Studio %PS_VERSION% %PS_PRODUCT_VERSION%
 CALL "%MSVC_DIR%\Common7\Tools\vsdevcmd.bat" -arch=%PS_ARCH% -host_arch=%PS_ARCH_HOST% -app_platform=Desktop
 IF %ERRORLEVEL% NEQ 0 GOTO :END
+REM CMake 4, bundled with Visual Studio 2026, rejects projects that declare
+REM cmake_minimum_required() below 3.5. Several dependencies still do.
+IF "%CMAKE_POLICY_VERSION_MINIMUM%"=="" SET CMAKE_POLICY_VERSION_MINIMUM=3.5
 REM Need to reset the echo state after vsdevcmd.bat clobbers it.
 @IF "%PS_ECHO_ON%" NEQ "" (echo on) ELSE (echo off)
 IF "%PS_DRY_RUN_ONLY%" NEQ "" (
@@ -266,14 +271,14 @@ FOR /F "tokens=2 delims=," %%I in (
 @ECHO Running %PS_RUN% application...
 @REM icacls below is just a hack for file-not-found error handling
 IF "%PS_RUN%" EQU "console" (
-    icacls prusa-slicer-console.exe >nul || GOTO :END
-    start /wait /b prusa-slicer-console.exe
+    icacls SliceItAll-console.exe >nul || GOTO :END
+    start /wait /b SliceItAll-console.exe
 ) ELSE IF "%PS_RUN%" EQU "window" (
-    icacls prusa-slicer.exe >nul || GOTO :END
-    start prusa-slicer.exe
+    icacls SliceItAll.exe >nul || GOTO :END
+    start SliceItAll.exe
 ) ELSE IF "%PS_RUN%" EQU "viewer" (
-    icacls prusa-gcodeviewer.exe >nul || GOTO :END
-    start prusa-gcodeviewer.exe
+    icacls SliceItAll-gcodeviewer.exe >nul || GOTO :END
+    start SliceItAll-gcodeviewer.exe
 ) ELSE IF "%PS_RUN%" EQU "custom" (
     icacls %PS_CUSTOM_BAT% >nul || GOTO :END
     CALL %PS_CUSTOM_BAT%

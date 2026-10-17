@@ -26,6 +26,10 @@
 #include "nanosvg/nanosvg.h"    // load SVG file
 
 #include <wx/display.h> // detection of change DPI
+#include <wx/image.h>
+#include <boost/algorithm/string.hpp>
+#include <boost/filesystem.hpp>
+#include <algorithm>
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/fstream.hpp>
 
@@ -40,7 +44,7 @@ using namespace Slic3r::GUI;
 using namespace Slic3r::GUI::Emboss;
 
 GLGizmoSVG::GLGizmoSVG(GLCanvas3D &parent)
-    : GLGizmoBase(parent, M_ICON_FILENAME, -3)
+    : GLGizmoBase(parent, M_ICON_FILENAME, 13)
     , m_gui_cfg(nullptr)
     , m_rotate_gizmo(parent, GLGizmoRotate::Axis::Z) // grab id = 2 (Z axis)
 {
@@ -183,6 +187,88 @@ struct GuiCfg
 GuiCfg create_gui_configuration();
 
 } // namespace 
+
+static bool raster_pixel_is_dark(const wxImage& img, int x, int y)
+{
+    const int w = img.GetWidth();
+    if (img.HasAlpha() && img.GetAlpha()[y * w + x] < 128)
+        return false;
+    const unsigned char* rgb = img.GetData();
+    const int i = (y * w + x) * 3;
+    return int(rgb[i]) + int(rgb[i + 1]) + int(rgb[i + 2]) < 384;
+}
+
+static std::string raster_image_to_svg(const std::string& image_path)
+{
+    if (!wxImage::FindHandler(wxBITMAP_TYPE_PNG))
+        wxInitAllImageHandlers();
+
+    wxImage img;
+    if (!img.LoadFile(from_u8(image_path)) || !img.IsOk()) {
+        show_error(nullptr, _L("Could not read that image."));
+        return {};
+    }
+
+    int w = img.GetWidth();
+    int h = img.GetHeight();
+    if (w < 1 || h < 1) {
+        show_error(nullptr, _L("That image is empty."));
+        return {};
+    }
+
+    const int max_px = 64;
+    if (w > max_px || h > max_px) {
+        const double scale = double(max_px) / double(std::max(w, h));
+        img.Rescale(std::max(1, int(w * scale + 0.5)), std::max(1, int(h * scale + 0.5)), wxIMAGE_QUALITY_NORMAL);
+        w = img.GetWidth();
+        h = img.GetHeight();
+    }
+
+    std::ostringstream svg;
+    svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << w << "\" height=\"" << h
+        << "\" viewBox=\"0 0 " << w << " " << h << "\">\n";
+    bool any = false;
+    for (int y = 0; y < h; ++y) {
+        int x = 0;
+        while (x < w) {
+            if (!raster_pixel_is_dark(img, x, y)) {
+                ++x;
+                continue;
+            }
+            const int x0 = x;
+            while (x < w && raster_pixel_is_dark(img, x, y))
+                ++x;
+            svg << "<rect x=\"" << x0 << "\" y=\"" << y << "\" width=\"" << (x - x0)
+                << "\" height=\"1\" fill=\"#000000\"/>\n";
+            any = true;
+        }
+    }
+    svg << "</svg>\n";
+    if (!any) {
+        show_error(nullptr, _L("That image has no dark pixels to emboss."));
+        return {};
+    }
+
+    const boost::filesystem::path out = boost::filesystem::temp_directory_path() /
+        ("sliceitall-emboss-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".svg");
+    boost::nowide::ofstream file(out.string(), std::ios::binary);
+    if (!file) {
+        show_error(nullptr, _L("Could not write the emboss image."));
+        return {};
+    }
+    file << svg.str();
+    return out.string();
+}
+
+static std::string choose_raster_image_as_svg()
+{
+    const wxString wildcard = _L("Images") + " (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp";
+    wxFileDialog dialog(nullptr, _L("Choose a black and white image"), last_used_directory, wxEmptyString, wildcard, wxFD_OPEN | wxFD_FILE_MUST_EXIST);
+    if (dialog.ShowModal() != wxID_OK)
+        return {};
+    last_used_directory = dialog.GetDirectory();
+    return raster_image_to_svg(into_u8(dialog.GetPath()));
+}
 
 // use private definition
 struct GLGizmoSVG::GuiCfg: public ::GuiCfg{};
@@ -385,10 +471,11 @@ bool GLGizmoSVG::on_init()
     m_rotate_gizmo.set_highlight_color(gray_color);
     // Set rotation gizmo upwardrotate
     m_rotate_gizmo.set_angle(PI / 2);
+    m_shortcut_key = WXK_CONTROL_I;
     return true;
 }
 
-std::string GLGizmoSVG::on_get_name() const { return _u8L("SVG"); }
+std::string GLGizmoSVG::on_get_name() const { return _u8L("Emboss image"); }
 
 void GLGizmoSVG::on_render() {
     if (const Selection &selection = m_parent.get_selection(); 
@@ -990,7 +1077,7 @@ bool init_texture(Texture &texture, const ExPolygonsWithIds& shapes_with_ids, un
     unsigned char alpha = 255; // without transparency
     std::array<unsigned char, 4> color_shape{201, 201, 201, alpha}; // from degin by @JosefZachar
     std::array<unsigned char, 4> color_error{237, 28, 36, alpha}; // from icon: resources/icons/flag_red.svg
-    std::array<unsigned char, 4> color_warning{237, 107, 33, alpha}; // icons orange
+    std::array<unsigned char, 4> color_warning{254, 50, 173, alpha};
     // draw unhealedable shape
     for (const ExPolygonsWithId &shapes_with_id : shapes_with_ids)
         if (!shapes_with_id.is_healed) {
@@ -1367,6 +1454,13 @@ void GLGizmoSVG::draw_window()
 
     draw_preview();
     draw_filename();
+    if (ImGui::Button(_u8L("Black and white image").c_str())) {
+        const std::string svg = choose_raster_image_as_svg();
+        if (!svg.empty())
+            create_volume(svg, ModelVolumeType::MODEL_PART);
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", _u8L("Turn a black and white image into an embossed part. Dark pixels become the shape.").c_str());
 
     // Is SVG baked?
     if (m_volume == nullptr) return;
@@ -2163,6 +2257,7 @@ GuiCfg create_gui_configuration() {
         window_title + // window title
         cfg.texture_max_size_px + 2 * style.FramePadding.y +  // preview (-- not sure with padding -> fix retina height)
         line_height_with_spacing + // filename
+        line_height_with_spacing + // black and white image
         separator_height + // separator - orange line
         input_height * 7 + // depth + size + use_surface + FromSurface + Rotation + Mirror + FaceTheCamera
         2 * style.WindowPadding.y;
@@ -2175,9 +2270,10 @@ GuiCfg create_gui_configuration() {
 std::string choose_svg_file()
 {
     wxWindow *parent = nullptr;
-    wxString message = _L("Choose SVG file for emboss:");
+    wxString message = _L("Choose an SVG or a black and white image:");
     wxString selected_file = wxEmptyString;
     wxString wildcard = file_wildcards(FT_SVG);
+    wildcard += "|" + _L("Black and white images") + " (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp";
     long style = wxFD_OPEN | wxFD_FILE_MUST_EXIST;
     wxFileDialog dialog(parent, message, last_used_directory, selected_file, wildcard, style);
     if (dialog.ShowModal() != wxID_OK) {
@@ -2202,8 +2298,9 @@ std::string choose_svg_file()
     }
 
     if (!boost::algorithm::iends_with(path, ".svg")) {
-        BOOST_LOG_TRIVIAL(warning) << "SVG file dialog return path without '.svg' tail";
-        return {};    
+        path = raster_image_to_svg(path);
+        if (path.empty())
+            return {};
     }
 
     last_used_directory = dialog.GetDirectory();
@@ -2225,6 +2322,9 @@ EmbossShape select_shape(std::string_view filepath, double tesselation_tolerance
     } else {
         svg.path = filepath; // copy
     }
+
+    if (boost::algorithm::contains(svg.path, "sliceitall-emboss-"))
+        shape.projection.depth = 1.;
     
 
     boost::filesystem::path path(svg.path);
@@ -2281,4 +2381,4 @@ DataBasePtr create_emboss_data_base(std::shared_ptr<std::atomic<bool>> &cancel, 
 } // namespace
 
 // any existing icon filename to not influence GUI
-const std::string GLGizmoSVG::M_ICON_FILENAME = "cut.svg";
+const std::string GLGizmoSVG::M_ICON_FILENAME = "svg_part.svg";

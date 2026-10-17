@@ -19,6 +19,15 @@ namespace Slic3r {
 namespace GUI {
 namespace Config {
 
+namespace {
+// Slice it All is 0.9.0. Vendor indexes still name the PrusaSlicer
+// release the profiles were written for.
+const Semver& profile_app_version()
+{
+	static const Semver baseline(2, 9, 6);
+	return Slic3r::SEMVER < baseline ? baseline : Slic3r::SEMVER;
+}
+}
 
 // Optimized lexicographic compare of two pre-release versions, ignoring the numeric suffix.
 static int compare_prerelease(const char *p1, const char *p2)
@@ -67,12 +76,12 @@ bool Version::is_slic3r_supported(const Semver &slic3r_version) const
 
 bool Version::is_current_slic3r_supported() const
 {
-	return this->is_slic3r_supported(Slic3r::SEMVER);
+	return this->is_slic3r_supported(profile_app_version());
 }
 
 bool Version::is_current_slic3r_downgrade() const
 {
-	return Slic3r::SEMVER < min_slic3r_version;
+	return profile_app_version() < min_slic3r_version;
 }
 
 
@@ -233,7 +242,7 @@ Index::const_iterator Index::recommended(const Semver &slic3r_version) const
 
 Index::const_iterator Index::recommended() const
 {
-	return this->recommended(Slic3r::SEMVER);
+	return this->recommended(profile_app_version());
 }
 
 std::vector<Index> Index::load_db()

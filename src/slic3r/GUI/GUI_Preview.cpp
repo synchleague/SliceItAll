@@ -351,6 +351,13 @@ float Preview::get_layers_slider_width(bool disregard_visibility) const
     return 0.0f;
 }
 
+double Preview::get_current_layer_z() const
+{
+    if (!m_layers_slider || !m_layers_slider->IsShown())
+        return -1.0;
+    return m_layers_slider->GetHigherValue();
+}
+
 void Preview::bind_event_handlers()
 {
     Bind(wxEVT_SIZE, &Preview::on_size, this);

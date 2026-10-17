@@ -114,6 +114,9 @@ public:
     void new_project();
     void load_project();
     void load_project(const wxString& filename);
+    // Replace the open model with a parked project. The canvas clipboard is left intact
+    // so models copied in one project can be pasted into another.
+    void swap_in_model(const Model& source, const wxString& project_filename);
     void add_model(bool imperial_units = false);
     void import_zip_archive();
     void import_sl1_archive();
@@ -202,6 +205,7 @@ public:
     // Called after the Preferences dialog is closed and the program settings are saved.
     // Update the UI based on the current preferences.
     void update_ui_from_settings();
+    void apply_editor_layout();
 
     void select_all();
     void deselect_all();
@@ -237,6 +241,8 @@ public:
     bool has_toolpaths_to_export() const;
     void export_toolpaths_to_obj() const;
     void reslice();
+    // Build supports (and the SLA pad) without rasterizing layers or exporting G-code.
+    void generate_supports();
     void reslice_FFF_until_step(PrintObjectStep step, const ModelObject &object, bool postpone_error_messages = false);
     void reslice_SLA_until_step(SLAPrintObjectStep step, const ModelObject &object, bool postpone_error_messages = false);
 
@@ -279,6 +285,7 @@ public:
     void leave_gizmos_stack();
 
     bool update_filament_colors_in_full_config();
+    void set_filament_slot_color(size_t idx, const std::string& hex);
     void on_config_change(const DynamicPrintConfig &config);
     void force_filament_colors_update();
     void force_filament_cb_update();

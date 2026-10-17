@@ -148,9 +148,18 @@ void MultipleBeds::inst_map_updated()
     for (const auto& [obj_id, bed_idx] : m_inst_to_bed)
         max_bed_idx = std::max(max_bed_idx, bed_idx);
 
-    if (m_number_of_beds != max_bed_idx + 1) {
-        m_number_of_beds = max_bed_idx + 1;
-        m_active_bed = m_number_of_beds - 1;
+    // Occupied plates stay. An empty plate added from the strip stays too,
+    // because add_bed() raises m_minimum_beds and this used to overwrite it.
+    const int occupied = std::min(get_max_beds(), max_bed_idx + 1);
+    if (occupied > m_minimum_beds)
+        m_minimum_beds = occupied;
+
+    const int previous = m_number_of_beds;
+    const int needed = std::min(get_max_beds(), std::max(m_minimum_beds, occupied));
+    if (m_number_of_beds != needed) {
+        m_number_of_beds = needed;
+        if (needed > previous)
+            m_active_bed = m_number_of_beds - 1;
         request_next_bed(false);
     }
     if (m_active_bed >= m_number_of_beds)
@@ -160,6 +169,56 @@ void MultipleBeds::inst_map_updated()
 void MultipleBeds::request_next_bed(bool show)
 {
     m_show_next_bed = (get_number_of_beds() < get_max_beds() ? show : false);
+}
+
+bool MultipleBeds::add_bed()
+{
+    if (m_number_of_beds >= get_max_beds())
+        return false;
+    m_minimum_beds = m_number_of_beds + 1;
+    m_number_of_beds = m_minimum_beds;
+    request_next_bed(false);
+    return true;
+}
+
+void MultipleBeds::reset_to_first_bed()
+{
+    m_number_of_beds = 1;
+    m_minimum_beds = 1;
+    m_active_bed = 0;
+    m_bed_locked.fill(false);
+    m_show_next_bed = false;
+    clear_inst_map();
+}
+
+bool MultipleBeds::remove_bed(int bed)
+{
+    if (m_number_of_beds <= 1 || bed < 0 || bed >= m_number_of_beds)
+        return false;
+    for (int i = bed; i < m_number_of_beds - 1; ++i)
+        m_bed_locked[i] = m_bed_locked[i + 1];
+    m_bed_locked[m_number_of_beds - 1] = false;
+    if (m_minimum_beds > 1)
+        --m_minimum_beds;
+    --m_number_of_beds;
+    if (m_active_bed == bed)
+        m_active_bed = std::max(0, bed - 1);
+    else if (m_active_bed > bed)
+        --m_active_bed;
+    if (m_active_bed >= m_number_of_beds)
+        m_active_bed = m_number_of_beds - 1;
+    return true;
+}
+
+bool MultipleBeds::is_bed_locked(int bed) const
+{
+    return bed >= 0 && bed < MAX_NUMBER_OF_BEDS && m_bed_locked[size_t(bed)];
+}
+
+void MultipleBeds::set_bed_locked(int bed, bool locked)
+{
+    if (bed >= 0 && bed < MAX_NUMBER_OF_BEDS)
+        m_bed_locked[size_t(bed)] = locked;
 }
 
 void MultipleBeds::set_active_bed(int i)
@@ -357,7 +416,9 @@ void MultipleBeds::update_shown_beds(Model& model, const BuildVolume& build_volu
             return std::max(max_so_far, value.second);
         }
     )};
-    m_number_of_beds = std::min(this->get_max_beds(), max_bed + 1);
+    m_number_of_beds = std::min(this->get_max_beds(), std::max(m_minimum_beds, max_bed + 1));
+    if (m_number_of_beds > m_minimum_beds)
+        m_minimum_beds = m_number_of_beds;
     model.update_print_volume_state(build_volume);
     set_active_bed(m_number_of_beds != original_number_of_beds ? 0 : stash_active);
     if (m_number_of_beds != original_number_of_beds)

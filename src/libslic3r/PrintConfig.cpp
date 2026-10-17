@@ -110,9 +110,29 @@ static const t_config_enum_values s_keys_map_PrintHostType {
     { "repetier",       htRepetier },
     { "mks",            htMKS },
     { "prusaconnectnew", htPrusaConnectNew },
+    { "anycubic",        htAnycubic },
+    { "offline",         htOffline },
 
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(PrintHostType)
+
+bool printer_can_connect(PrinterTechnology technology, const std::string& vendor_name)
+{
+    if (technology != ptSLA)
+        return true;
+    return boost::algorithm::icontains(vendor_name, "prusa");
+}
+
+PrintHostType default_host_type(PrinterTechnology technology, const std::string& vendor_name)
+{
+    if (!printer_can_connect(technology, vendor_name))
+        return htOffline;
+    if (technology != ptSLA && boost::algorithm::icontains(vendor_name, "anycubic"))
+        return htAnycubic;
+    if (boost::algorithm::icontains(vendor_name, "prusa"))
+        return htPrusaLink;
+    return htOctoPrint;
+}
 
 static const t_config_enum_values s_keys_map_AuthorizationType {
     { "key",            atKeyPassword },
@@ -1280,7 +1300,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Color");
     def->tooltip = L("This is only used in the Slic3r interface as a visual help.");
     def->gui_type = ConfigOptionDef::GUIType::color;
-    def->set_default_value(new ConfigOptionStrings { "#29B2B2" });
+    def->set_default_value(new ConfigOptionStrings { "#8C8C8C" });
 
     def = this->add("filament_notes", coStrings);
     def->label = L("Filament notes");
@@ -2501,7 +2521,7 @@ void PrintConfigDef::init_fff_params()
     def = this->add("host_type", coEnum);
     def->label = L("Host Type");
     def->tooltip = L("Slic3r can upload G-code files to a printer host. This field must contain "
-                   "the kind of the host.");
+                   "the kind of the host. Anycubic is the printer's own LAN mode: on the printer open Settings, Network, LAN Mode, and enter the Wi-Fi address shown there. No API key is used, and nothing is installed on the printer.");
     def->set_enum<PrintHostType>({
         { "prusalink",      "PrusaLink" },
         { "prusaconnect",   "PrusaConnect" },
@@ -2511,7 +2531,9 @@ void PrintConfigDef::init_fff_params()
         { "flashair",       "FlashAir" },
         { "astrobox",       "AstroBox" },
         { "repetier",       "Repetier" },
-        { "mks",            "MKS" }
+        { "mks",            "MKS" },
+        { "anycubic",       "Anycubic" },
+        { "offline",        "Offline" }
     });
     def->mode = comAdvanced;
     def->cli = ConfigOptionDef::nocli;
@@ -3256,7 +3278,7 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Single Extruder Multi Material");
     def->tooltip = L("The printer multiplexes filaments into a single hot end.");
     def->mode = comExpert;
-    def->set_default_value(new ConfigOptionBool(false));
+    def->set_default_value(new ConfigOptionBool(true));
 
     def = this->add("single_extruder_multi_material_priming", coBool);
     def->label = L("Prime all printing extruders");
@@ -3539,7 +3561,7 @@ void PrintConfigDef::init_fff_params()
         { "organic", L("Organic") }
     });
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionEnum<SupportMaterialStyle>(smsGrid));
+    def->set_default_value(new ConfigOptionEnum<SupportMaterialStyle>(smsOrganic));
 
     def = this->add("support_material_synchronize_layers", coBool);
     def->label = L("Synchronize with object layers");
@@ -4399,32 +4421,32 @@ void PrintConfigDef::init_sla_params()
     def->mode = comExpert;
     def->set_default_value(new ConfigOptionEnum<SLADisplayOrientation>(sladoPortrait));
 
-    def = this->add("fast_tilt_time", coFloat);
+    def = this->add_nullable("fast_tilt_time", coFloat);
     def->label = L("Fast");
     def->full_label = L("Fast tilt");
     def->tooltip = L("Time of the fast tilt");
     def->sidetext = L("s");
     def->min = 0;
     def->mode = comExpert;
-    def->set_default_value(new ConfigOptionFloat(5.));
+    def->set_default_value(new ConfigOptionFloatNullable(5.));
 
-    def = this->add("slow_tilt_time", coFloat);
+    def = this->add_nullable("slow_tilt_time", coFloat);
     def->label = L("Slow");
     def->full_label = L("Slow tilt");
     def->tooltip = L("Time of the slow tilt");
     def->sidetext = L("s");
     def->min = 0;
     def->mode = comExpert;
-    def->set_default_value(new ConfigOptionFloat(8.));
+    def->set_default_value(new ConfigOptionFloatNullable(8.));
 
-    def = this->add("high_viscosity_tilt_time", coFloat);
+    def = this->add_nullable("high_viscosity_tilt_time", coFloat);
     def->label = L("High viscosity");
     def->full_label = L("Tilt for high viscosity resin");
     def->tooltip = L("Time of the super slow tilt");
     def->sidetext = L("s");
     def->min = 0;
     def->mode = comExpert;
-    def->set_default_value(new ConfigOptionFloat(10.));
+    def->set_default_value(new ConfigOptionFloatNullable(10.));
 
     def = this->add("area_fill", coFloat);
     def->label = L("Area fill threshold");
@@ -4517,6 +4539,13 @@ void PrintConfigDef::init_sla_params()
     def->mode = comExpert;
     def->set_default_value(new ConfigOptionFloat(1.0));
 
+    def = this->add("time_estimate_correction", coFloat);
+    def->label = L("Time estimate correction");
+    def->tooltip = L("Extra seconds added to every layer when estimating a print that uses lift motion instead of a tilt.");
+    def->sidetext = L("s");
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionFloat(0.));
+
 
     // SLA Material settings.
 
@@ -4590,6 +4619,14 @@ void PrintConfigDef::init_sla_params()
     def->mode = comExpert;
     def->set_default_value(new ConfigOptionInt(10));
 
+    def = this->add("bottom_layers", coInt);
+    def->label = L("Bottom layers");
+    def->tooltip = L("Number of layers that keep the initial exposure time. GOO export also uses the slower initial lift for these layers.");
+    def->min = 1;
+    def->max = 20;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(2));
+
     def = this->add("min_exposure_time", coFloat);
     def->label = L("Minimum exposure time");
     def->tooltip = L("Minimum exposure time");
@@ -4635,6 +4672,73 @@ void PrintConfigDef::init_sla_params()
     def->sidetext = L("s");
     def->min = 0;
     def->set_default_value(new ConfigOptionFloat(15));
+
+    def = this->add("exposure_pwm", coInt);
+    def->label = L("Exposure PWM");
+    def->tooltip = L("LED power for normal layers, written into a GOO file. 255 is full power.");
+    def->min = 0;
+    def->max = 255;
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionInt(255));
+
+    def = this->add("initial_exposure_pwm", coInt);
+    def->label = L("Initial exposure PWM");
+    def->tooltip = L("LED power for bottom layers, written into a GOO file. 255 is full power.");
+    def->min = 0;
+    def->max = 255;
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionInt(255));
+
+    {
+        auto add_distance = [this](const char *key, const char *label, double defval) {
+            ConfigOptionDef *option = this->add(key, coFloat);
+            option->label = label;
+            option->sidetext = L("mm");
+            option->min = 0;
+            option->mode = comAdvanced;
+            option->set_default_value(new ConfigOptionFloat(defval));
+        };
+        auto add_speed = [this](const char *key, const char *label, double defval) {
+            ConfigOptionDef *option = this->add(key, coFloat);
+            option->label = label;
+            option->sidetext = L("mm/min");
+            option->min = 0;
+            option->mode = comAdvanced;
+            option->set_default_value(new ConfigOptionFloat(defval));
+        };
+        auto add_wait = [this](const char *key, const char *label, double defval) {
+            ConfigOptionDef *option = this->add(key, coFloat);
+            option->label = label;
+            option->sidetext = L("s");
+            option->min = 0;
+            option->mode = comAdvanced;
+            option->set_default_value(new ConfigOptionFloat(defval));
+        };
+
+        add_distance("sla_initial_primary_lift_distance", L("Initial lift distance"), 5.);
+        add_speed("sla_initial_primary_lift_speed", L("Initial lift speed"), 60.);
+        add_distance("sla_initial_secondary_lift_distance", L("Initial secondary lift distance"), 0.);
+        add_speed("sla_initial_secondary_lift_speed", L("Initial secondary lift speed"), 60.);
+        add_distance("sla_initial_primary_retract_distance", L("Initial retract distance"), 5.);
+        add_speed("sla_initial_primary_retract_speed", L("Initial retract speed"), 150.);
+        add_distance("sla_initial_secondary_retract_distance", L("Initial secondary retract distance"), 0.);
+        add_speed("sla_initial_secondary_retract_speed", L("Initial secondary retract speed"), 150.);
+        add_wait("sla_initial_wait_before_lift", L("Initial wait before lift"), 0.);
+        add_wait("sla_initial_wait_after_lift", L("Initial wait after lift"), 0.);
+        add_wait("sla_initial_wait_after_retract", L("Initial wait after retract"), 0.5);
+
+        add_distance("sla_primary_lift_distance", L("Lift distance"), 5.);
+        add_speed("sla_primary_lift_speed", L("Lift speed"), 80.);
+        add_distance("sla_secondary_lift_distance", L("Secondary lift distance"), 0.);
+        add_speed("sla_secondary_lift_speed", L("Secondary lift speed"), 80.);
+        add_distance("sla_primary_retract_distance", L("Retract distance"), 5.);
+        add_speed("sla_primary_retract_speed", L("Retract speed"), 150.);
+        add_distance("sla_secondary_retract_distance", L("Secondary retract distance"), 0.);
+        add_speed("sla_secondary_retract_speed", L("Secondary retract speed"), 150.);
+        add_wait("sla_wait_before_lift", L("Wait before lift"), 0.);
+        add_wait("sla_wait_after_lift", L("Wait after lift"), 0.);
+        add_wait("sla_wait_after_retract", L("Wait after retract"), 0.5);
+    }
 
     def = this->add("material_correction", coFloats);
     def->full_label = L("Correction for expansion");

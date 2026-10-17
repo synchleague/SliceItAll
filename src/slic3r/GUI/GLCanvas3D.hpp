@@ -264,6 +264,8 @@ class GLCanvas3D
                 float profile{ 0.0f };
             };
             OldCanvasWidth old_canvas_width;
+            float old_bar_inset{ -1.0f };
+            float old_profile_inset{ -1.0f };
             std::vector<double> old_layer_height_profile;
         };
         Profile m_profile;
@@ -508,12 +510,34 @@ private:
     bool m_use_clipping_planes;
     std::array<SlaCap, 2> m_sla_caps;
     int m_layer_slider_index = -1;
+    bool m_sla_layer_is_main{ false };
+    float m_sla_layer_zoom{ 1.f };
+    float m_sla_layer_pan_x{ 0.f };
+    float m_sla_layer_pan_y{ 0.f };
+    bool m_sla_layer_panning{ false };
+    float m_sla_layer_drag_x{ 0.f };
+    float m_sla_layer_drag_y{ 0.f };
+    unsigned int m_sla_layer_tex{ 0 };
+    int m_sla_layer_tex_w{ 0 };
+    int m_sla_layer_tex_h{ 0 };
+    int m_sla_layer_cached_index{ -2 };
+    unsigned int m_sla_view_tex{ 0 };
+    int m_sla_view_tex_w{ 0 };
+    int m_sla_view_cached_index{ -2 };
+    float m_sla_pip_width{ 220.f };
+    bool m_sla_pip_resizing{ false };
+    float m_sla_pip_resize_start_x{ 0.f };
+    float m_sla_pip_resize_start_y{ 0.f };
+    float m_sla_pip_resize_start_w{ 220.f };
     std::string m_sidebar_field;
     // when true renders an extra frame by not resetting m_dirty to false
     // see request_extra_frame()
     bool m_extra_frame_requested;
     bool m_event_handlers_bound{ false };
     float m_bed_selector_current_height = 0.f;
+    float m_bed_selector_left_inset = 0.f;
+    bool m_view_cube_dragging{ false };
+    bool m_assembly_view{ false };
 
     GLVolumeCollection m_volumes;
 #if SLIC3R_OPENGL_ES
@@ -532,8 +556,6 @@ public:
     BackgroundSlicingProcess *m_process;
 private:
     bool m_requires_check_outside_state{ false };
-
-    void select_bed(int i, bool triggered_by_user);
 
     std::array<unsigned int, 2> m_old_size{ 0, 0 };
 
@@ -798,9 +820,12 @@ public:
 
     void zoom_to_bed();
     void zoom_to_volumes();
+    bool is_assembly_view() const { return m_assembly_view; }
+    void set_assembly_view(bool on);
     void zoom_to_selection();
     void zoom_to_gcode();
     void select_view(const std::string& direction);
+    void select_bed(int i, bool triggered_by_user);
 
     PrinterTechnology current_printer_technology() const;
 
@@ -862,6 +887,7 @@ public:
     void on_set_focus(wxFocusEvent& evt);
 
     Size get_canvas_size() const;
+    float get_bed_selector_height() const { return m_bed_selector_current_height; }
     Vec2d get_local_mouse_position() const;
 
     // store opening position of menu
@@ -987,6 +1013,8 @@ private:
     bool _init_main_toolbar();
     bool _init_undoredo_toolbar();
     bool _init_view_toolbar();
+    // Writes assembly position and rotation. Scale is written to the editor only when write_editor_scale is set.
+    void commit_assembly_pose(const std::string& snapshot_type, bool write_editor_scale);
     bool _init_collapse_toolbar();
 
     bool _set_current();
@@ -1016,13 +1044,28 @@ private:
     void _check_and_update_toolbar_icon_scale();
     void _render_overlays();
     void _render_bed_selector();
+    void _render_bed_tools();
+    void remove_build_plate(int bed);
+    void auto_orient_build_plate(int bed);
+    void arrange_build_plate(int bed);
+    void toggle_build_plate_lock(int bed);
+    bool volume_on_locked_bed(unsigned int volume_idx) const;
+    bool selection_on_locked_bed() const;
+    void _render_technology_badge();
+    void _render_sla_layer_pip();
+    bool sla_layer_is_main_view() const;
+    void ensure_sla_layer_texture();
+    void render_sla_layer_image();
+    void clamp_sla_layer_pan();
+    void zoom_sla_layer(float wheel, float mouse_x, float mouse_y);
     void _render_volumes_for_picking(const Camera& camera) const;
     void _render_current_gizmo() const { m_gizmos.render_current_gizmo(); }
     void _render_gizmos_overlay();
     void _render_main_toolbar();
     void _render_undoredo_toolbar();
     void _render_collapse_toolbar() const;
-    void _render_view_toolbar() const;
+    void _render_view_toolbar();
+    void _render_orientation_controls();
 #if ENABLE_SHOW_CAMERA_TARGET
     void _render_camera_target();
     void _render_camera_target_validation_box();

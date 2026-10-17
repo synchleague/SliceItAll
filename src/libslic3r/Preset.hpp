@@ -147,6 +147,11 @@ public:
     bool                is_dirty    = false;
     // Is this preset compatible with the currently active printer?
     bool                is_compatible = true;
+    // A material stays usable on every printer. This marks the ones tuned for the current printer.
+    bool                is_optimized = false;
+    // Printer model ids, or printer preset names, this material was tuned for.
+    // Empty means the vendor profile's own compatibility list is the flag.
+    std::vector<std::string> optimized_for;
 
     bool                is_user() const { return ! this->is_default && ! this->is_system; }
 
@@ -257,7 +262,7 @@ protected:
 };
 
 bool is_compatible_with_print  (const PresetWithVendorProfile &preset, const PresetWithVendorProfile &active_print, const PresetWithVendorProfile &active_printer);
-bool is_compatible_with_printer(const PresetWithVendorProfile &preset, const PresetWithVendorProfile &active_printer, const DynamicPrintConfig *extra_config);
+bool is_compatible_with_printer(const PresetWithVendorProfile &preset, const PresetWithVendorProfile &active_printer, const DynamicPrintConfig *extra_config, bool ignore_vendor = false);
 bool is_compatible_with_printer(const PresetWithVendorProfile &preset, const PresetWithVendorProfile &active_printer);
 
 enum class PresetSelectCompatibleType {
@@ -878,6 +883,7 @@ public:
 
     const Preset*   preset;
     bool            is_compatible{ true };
+    bool            is_optimized{ false };
 };
 
 // Collections of filaments for extruder

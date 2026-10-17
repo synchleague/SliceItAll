@@ -1316,9 +1316,18 @@ void ImGuiWrapper::init_style()
     };
 
     // Window
-    style.WindowRounding = 4.0f;
+    style.WindowRounding    = 8.0f;
+    style.ChildRounding     = 6.0f;
+    style.FrameRounding     = 5.0f;
+    style.GrabRounding      = 5.0f;
+    style.ScrollbarRounding = 6.0f;
+    style.TabRounding       = 5.0f;
+    style.WindowBorderSize  = 0.0f;
     set_color(ImGuiCol_WindowBg,        ImGuiPureWrap::COL_WINDOW_BACKGROUND);
-    set_color(ImGuiCol_TitleBgActive,   ImGuiPureWrap::COL_ORANGE_DARK);
+    set_color(ImGuiCol_TitleBg,         ImGuiPureWrap::COL_WINDOW_BACKGROUND);
+    set_color(ImGuiCol_TitleBgActive,   ImGuiPureWrap::COL_WINDOW_BACKGROUND);
+    set_color(ImGuiCol_PopupBg,         ImGuiPureWrap::COL_WINDOW_BACKGROUND);
+    set_color(ImGuiCol_Border,          ImVec4(0.28f, 0.24f, 0.34f, 1.0f));
 
     // Generics
     set_color(ImGuiCol_FrameBg,         ImGuiPureWrap::COL_GREY_DARK);
@@ -1346,7 +1355,7 @@ void ImGuiWrapper::init_style()
     set_color(ImGuiCol_SliderGrabActive,ImGuiPureWrap::COL_ORANGE_LIGHT);
 
     // Separator
-    set_color(ImGuiCol_Separator,       ImGuiPureWrap::COL_ORANGE_LIGHT);
+    set_color(ImGuiCol_Separator,       ImVec4(0.32f, 0.28f, 0.38f, 1.0f));
 
     // Tabs
     set_color(ImGuiCol_Tab,                 ImGuiPureWrap::COL_ORANGE_DARK);

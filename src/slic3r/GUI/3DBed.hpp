@@ -45,6 +45,9 @@ private:
     GLModel m_triangles;
     GLModel m_gridlines;
     GLModel m_contourlines;
+    GLModel m_lip;
+    GLModel m_logo;
+    GLTexture m_logo_texture;
     GLTexture m_texture;
     // temporary texture shown until the main texture has still no levels compressed
     GLTexture m_temp_texture;
@@ -98,6 +101,9 @@ private:
     void render_custom(GLCanvas3D& canvas, const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool show_texture, bool picking, bool is_active);
     void render_default(bool bottom, bool picking, bool show_texture, const Transform3d& view_matrix, const Transform3d& projection_matrix);
     void render_contour(const Transform3d& view_matrix, const Transform3d& projection_matrix);
+    void init_plate_marks();
+    void render_plate_marks(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool active);
+    bool bed_model_has_front_lip() const;
 
     void register_raycasters_for_picking(const GLModel::Geometry& geometry, const Transform3d& trafo);
 };

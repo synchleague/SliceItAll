@@ -360,7 +360,7 @@ void DesktopIntegrationDialog::perform_desktop_integration()
         "Categories=Graphics;3DGraphics;Engineering;\n"
         "Keywords=3D;Printing;Slicer;slice;3D;printer;convert;gcode;stl;obj;amf;SLA\n"
         "StartupNotify=false\n"
-        "StartupWMClass=prusa-slicer\n", name_suffix, version_suffix, excutable_path);
+        "StartupWMClass=SliceItAll\n", name_suffix, version_suffix, excutable_path);
 
     bool candidate_found = false;
     for (size_t i = 0; i < target_candidates.size(); ++i) {
@@ -444,7 +444,7 @@ void DesktopIntegrationDialog::perform_desktop_integration()
             app_config->set("desktop_integration_app_viewer_path", desktop_path);
         else {
             BOOST_LOG_TRIVIAL(error) << "Performing desktop integration failed - could not create Gcodeviewer desktop file";
-            show_error(nullptr, _L("Performing desktop integration failed - could not create Gcodeviewer desktop file. PrusaSlicer desktop file was probably created successfully."));
+            show_error(nullptr, format_wxstr(_L("Performing desktop integration failed - could not create the G-code viewer desktop file. The %1% desktop file was probably created successfully."), wxString(SLIC3R_APP_NAME)));
         }
     }
     wxGetApp().plater()->get_notification_manager()->push_notification(NotificationType::DesktopIntegrationSuccess);

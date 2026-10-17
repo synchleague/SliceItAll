@@ -169,6 +169,9 @@ public:
     void render() { on_render(); }
     void render_input_window(float x, float y, float bottom_limit);
 
+    // Keep a tool panel above the build-plate bar until its title is dragged.
+    static void place_input_window(const std::string& name, float x, float& y, float bottom_limit);
+
     /// <summary>
     /// Mouse tooltip text
     /// </summary>

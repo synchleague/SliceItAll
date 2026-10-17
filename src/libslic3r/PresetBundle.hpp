@@ -7,6 +7,7 @@
 #define slic3r_PresetBundle_hpp_
 
 #include "Preset.hpp"
+#include "Catalog.hpp"
 #include "AppConfig.hpp"
 #include "enum_bitmask.hpp"
 
@@ -157,6 +158,15 @@ public:
 
     // Export a config bundle file containing all the presets and the names of the active presets.
     void                        export_configbundle(const std::string &path, bool export_system_settings = false, bool export_physical_printers = false, std::function<bool(const std::string&, const std::string&, std::string&)> secret_callback = nullptr);
+    // Export the selected SLA printer together with the user print profiles and resins that belong to it.
+    void                        export_printer_and_resin_presets(const std::string &path);
+
+    // Editable printer and material database in the user data folder.
+    // A newer catalog is merged. Presets marked as the user's are kept.
+    static std::string          user_catalog_path();
+    static void                 ensure_user_catalog();
+    void                        install_catalog(const CatalogDocument &doc, bool update_existing);
+    void                        uninstall_catalog_entry(const CatalogEntry &entry);
 
     // Enable / disable the "- default -" preset.
     void                        set_default_suppressed(bool default_suppressed);
@@ -205,6 +215,7 @@ public:
 
 private:
     std::pair<PresetsConfigSubstitutions, std::string> load_system_presets(ForwardCompatibilitySubstitutionRule compatibility_rule);
+    void                        load_user_catalog();
     // Merge one vendor's presets with the other vendor's presets, report duplicates.
     std::vector<std::string>    merge_presets(PresetBundle &&other);
     // Update renamed_from and alias maps of system profiles.

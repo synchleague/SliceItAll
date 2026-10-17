@@ -11,6 +11,7 @@
 #include <GL/glew.h>
 
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/MsgDialog.hpp"
 #include "slic3r/GUI/GUI_ObjectSettings.hpp"
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/Plater.hpp"
@@ -18,6 +19,13 @@
 #include "libslic3r/SLAPrint.hpp"
 
 #include "libslic3r/Model.hpp"
+#include "libslic3r/MeshBoolean.hpp"
+#include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/AABBMesh.hpp"
+
+#include <cmath>
+#include <limits>
+#include <optional>
 
 namespace Slic3r {
 namespace GUI {
@@ -33,6 +41,10 @@ bool GLGizmoHollow::on_init()
     m_shortcut_key = WXK_CONTROL_H;
     m_desc["enable"]           = _u8L("Hollow this object");
     m_desc["preview"]          = _u8L("Preview hollowed and drilled model");
+    m_desc["hint"]             = _u8L("Drag this panel by its title. Hollow the mesh first so the interior is empty. Then click the model to place a drain hole, and drill it through the wall so resin can leave. The drilled mesh is what an export keeps.");
+    m_desc["pierce"]           = _u8L("Pierce the wall");
+    m_desc["hollow_mesh"]      = _u8L("Hollow the mesh");
+    m_desc["cut_mesh"]         = _u8L("Drill holes through the mesh");
     m_desc["offset"]           = _u8L("Offset") + ": ";
     m_desc["quality"]          = _u8L("Quality") + ": ";
     m_desc["closing_distance"] = _u8L("Closing distance") + ": ";
@@ -249,9 +261,11 @@ bool GLGizmoHollow::gizmo_event(SLAGizmoEventType action, const Vec2d& mouse_pos
             std::pair<Vec3f, Vec3f> pos_and_normal;
             if (unproject_on_mesh(mouse_position, pos_and_normal)) { // we got an intersection
                 Plater::TakeSnapshot snapshot(wxGetApp().plater(), _L("Add drainage hole"));
+                const Vec3f inward = -pos_and_normal.second;
+                const float depth = pierced_depth(pos_and_normal.first, inward);
 
                 mo->sla_drain_holes.emplace_back(pos_and_normal.first,
-                                                -pos_and_normal.second, m_new_hole_radius, m_new_hole_height);
+                                                inward, m_new_hole_radius, depth);
                 m_selected.push_back(false);
                 assert(m_selected.size() == mo->sla_drain_holes.size());
                 m_parent.set_as_dirty();
@@ -571,11 +585,8 @@ void GLGizmoHollow::on_render_input_window(float x, float y, float bottom_limit)
 
 
 RENDER_AGAIN:
-    const float approx_height = m_imgui->scaled(20.0f);
-    y = std::min(y, bottom_limit - approx_height);
-    ImGuiPureWrap::set_next_window_pos(x, y, ImGuiCond_Always);
-
-    ImGuiPureWrap::begin(get_name(), ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+    ImGuiPureWrap::begin(get_name(), ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+    GLGizmoBase::place_input_window(get_name(), x, y, bottom_limit);
 
     // First calculate width of all the texts that are could possibly be shown. We will decide set the dialog width based on that:
     const float clipping_slider_left = std::max(ImGuiPureWrap::calc_text_size(m_desc.at("clipping_of_view")).x,
@@ -592,9 +603,14 @@ RENDER_AGAIN:
     const float minimal_slider_width = m_imgui->scaled(4.f);
 
     const float button_preview_width = ImGuiPureWrap::calc_button_size(m_desc.at("preview")).x;
+    const float button_hollow_width = ImGuiPureWrap::calc_button_size(m_desc.at("hollow_mesh")).x;
+    const float button_drill_width = ImGuiPureWrap::calc_button_size(m_desc.at("cut_mesh")).x;
 
     float window_width = minimal_slider_width + std::max({settings_sliders_left, clipping_slider_left, diameter_slider_left});
-    window_width = std::max(window_width, button_preview_width);
+    window_width = std::max({window_width, button_preview_width, button_hollow_width, button_drill_width});
+
+    ImGuiPureWrap::text_wrapped(m_desc.at("hint"), window_width);
+    ImGui::Separator();
 
     m_imgui->disabled_begin(!is_input_enabled());
 
@@ -617,7 +633,7 @@ RENDER_AGAIN:
 
     m_imgui->disabled_end();
 
-    m_imgui->disabled_begin(!is_input_enabled() || !m_enable_hollowing);
+    m_imgui->disabled_begin(!is_input_enabled());
 
     ImGui::AlignTextToFramePadding();
     ImGuiPureWrap::text(m_desc.at("offset"));
@@ -672,6 +688,8 @@ RENDER_AGAIN:
         }
     }
 
+    const bool hollow_mesh = ImGuiPureWrap::button(m_desc.at("hollow_mesh"));
+
     m_imgui->disabled_end();
 
     bool force_refresh = false;
@@ -706,16 +724,16 @@ RENDER_AGAIN:
 
     ImGuiPureWrap::text(m_desc["hole_depth"]);
     ImGui::SameLine(diameter_slider_left, ImGuiPureWrap::get_item_spacing().x);
-    m_imgui->slider_float("##hole_depth", &m_new_hole_height, 0.f, 10.f, "%.1f mm", 1.f, false);
+    m_imgui->slider_float("##hole_depth", &m_new_hole_height, 0.f, 30.f, "%.1f mm", 1.f, false);
+    clicked |= m_imgui->get_last_slider_status().clicked;
+    edited |= m_imgui->get_last_slider_status().edited;
+    deactivated |= m_imgui->get_last_slider_status().deactivated_after_edit;
 
     m_imgui->disabled_end();
+    ImGuiPureWrap::checkbox(m_desc.at("pierce"), m_pierce_wall);
 
     // Same as above:
     m_new_hole_height = std::clamp(m_new_hole_height, 0.f, 100.f);
-
-    clicked |= m_imgui->get_last_slider_status().clicked;
-    edited |= m_imgui->get_last_slider_status().edited;
-    deactivated |= m_imgui->get_last_slider_status().deactivated_after_edit;;
 
     // Following is a nasty way to:
     //  - save the initial value of the slider before one starts messing with it
@@ -758,6 +776,10 @@ RENDER_AGAIN:
 
     m_imgui->disabled_begin(!is_input_enabled() || mo->sla_drain_holes.empty());
     remove_all = ImGuiPureWrap::button(m_desc.at("remove_all"));
+    m_imgui->disabled_end();
+    // Cutting uses the part itself, so it does not wait for the slice preview.
+    m_imgui->disabled_begin(mo->sla_drain_holes.empty());
+    const bool cut_mesh = ImGuiPureWrap::button(m_desc.at("cut_mesh"));
     m_imgui->disabled_end();
 
     // Following is rendered in both editing and non-editing mode:
@@ -810,6 +832,12 @@ RENDER_AGAIN:
         }
     }
 
+    if (hollow_mesh)
+        hollow_object_mesh();
+
+    if (cut_mesh)
+        cut_holes_into_mesh();
+
     if (force_refresh)
         m_parent.set_as_dirty();
 
@@ -847,7 +875,335 @@ bool GLGizmoHollow::on_is_selectable() const
 
 std::string GLGizmoHollow::on_get_name() const
 {
-    return _u8L("Hollow and drill");
+    return _u8L("Hollowing & place drainage holes");
+}
+
+float GLGizmoHollow::pierced_depth(const Vec3f& pos, const Vec3f& inward) const
+{
+    if (!m_pierce_wall)
+        return m_new_hole_height;
+    const MeshRaycaster* raycaster = m_c->raycaster() ? m_c->raycaster()->raycaster() : nullptr;
+    if (raycaster == nullptr)
+        return m_new_hole_height;
+
+    Vec3f direction = inward;
+    const float length = direction.norm();
+    if (length < 1e-6f)
+        return m_new_hole_height;
+    direction /= length;
+
+    // Start just inside the outer surface so the first hit is the inner wall.
+    const double shift = 0.2;
+    const Vec3d origin = pos.cast<double>() + direction.cast<double>() * shift;
+    const std::vector<AABBMesh::hit_result> hits = raycaster->get_aabb_mesh().query_ray_hits(origin, direction.cast<double>());
+    double nearest = std::numeric_limits<double>::infinity();
+    for (const AABBMesh::hit_result& hit : hits) {
+        if (!hit.is_hit())
+            continue;
+        const double distance = hit.distance() + shift;
+        if (distance > 0.4 && distance < nearest)
+            nearest = distance;
+    }
+    // A nearby inner surface is a shell. A far hit is the other side of a solid, so keep the chosen depth.
+    if (nearest > 0.4 && nearest < 30.)
+        return float(nearest + 0.8);
+    return m_new_hole_height;
+}
+
+namespace {
+
+bool bounds_volume(const indexed_triangle_set& mesh)
+{
+    if (mesh.indices.empty())
+        return false;
+    try {
+        const auto cgal = MeshBoolean::cgal::triangle_mesh_to_cgal(mesh);
+        return cgal && MeshBoolean::cgal::does_bound_a_volume(*cgal);
+    } catch (const std::exception&) {
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+enum class ChannelFit { Miss, Solid, Ready };
+
+struct Channel {
+    ChannelFit fit = ChannelFit::Miss;
+    sla::DrainHole hole;
+};
+
+// A drain crosses one wall of an already hollow mesh. The cylinder starts
+// outside that wall and ends in the cavity. A far second hit is the other
+// side of a solid, which is not a drain.
+Channel through_channel(const AABBMesh& mesh, const sla::DrainHole& stored, double max_wall)
+{
+    Channel result;
+    Vec3d direction = stored.normal.cast<double>();
+    if (direction.norm() < 1e-9)
+        return result;
+    direction.normalize();
+
+    const double stick = double(sla::HoleStickOutLength);
+    const Vec3d origin = stored.pos.cast<double>() - direction * stick;
+    const std::vector<AABBMesh::hit_result> hits = mesh.query_ray_hits(origin, direction);
+
+    double entry = -1.;
+    double exit = -1.;
+    for (const AABBMesh::hit_result& hit : hits) {
+        if (!hit.is_hit())
+            continue;
+        const double distance = hit.distance();
+        if (distance < 1e-4)
+            continue;
+        if (entry < 0.)
+            entry = distance;
+        else if (distance > entry + 0.2) {
+            exit = distance;
+            break;
+        }
+    }
+    if (entry < 0. || exit < 0.)
+        return result;
+    if (exit - entry > max_wall) {
+        result.fit = ChannelFit::Solid;
+        return result;
+    }
+
+    const double start = std::max(0., entry - stick);
+    const double end = exit + stick;
+    result.hole = stored;
+    result.hole.pos = (origin + direction * start).cast<float>();
+    result.hole.normal = direction.cast<float>();
+    result.hole.height = float(end - start);
+    result.fit = ChannelFit::Ready;
+    return result;
+}
+
+indexed_triangle_set object_space_mesh(const ModelVolume& volume)
+{
+    indexed_triangle_set mesh = volume.mesh().its;
+    its_transform(mesh, volume.get_matrix(), true);
+    return mesh;
+}
+
+void back_to_volume_space(indexed_triangle_set& mesh, const ModelVolume& volume)
+{
+    its_transform(mesh, volume.get_matrix().inverse(), true);
+}
+
+std::optional<indexed_triangle_set> hollow_shell(const indexed_triangle_set& mesh, const sla::HollowingConfig& config)
+{
+    try {
+        sla::InteriorPtr interior = sla::generate_interior(mesh, config);
+        if (!interior || sla::get_mesh(*interior).empty())
+            return std::nullopt;
+
+        indexed_triangle_set merged = mesh;
+        sla::hollow_mesh(merged, *interior, 0);
+        if (bounds_volume(merged))
+            return merged;
+
+        indexed_triangle_set opened = mesh;
+        sla::hollow_mesh(opened, *interior, sla::hfRemoveInsideTriangles);
+        if (bounds_volume(opened))
+            return opened;
+
+        if (merged.indices.size() > mesh.indices.size())
+            return merged;
+        return std::nullopt;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+bool hole_meets_volume(const ModelVolume& volume, const sla::DrainHole& hole)
+{
+    BoundingBoxf3 box = volume.mesh().transformed_bounding_box(volume.get_matrix());
+    const double pad = double(hole.radius) + double(sla::HoleStickOutLength) + 1.0;
+    box.min.array() -= pad;
+    box.max.array() += pad;
+    const Vec3d start = hole.pos.cast<double>();
+    Vec3d axis = hole.normal.cast<double>();
+    if (axis.norm() < 1e-9)
+        return false;
+    axis.normalize();
+    const Vec3d end = start + axis * double(hole.height);
+    const auto inside = [&box](const Vec3d& point) {
+        return (point.array() >= box.min.array()).all() && (point.array() <= box.max.array()).all();
+    };
+    return inside(start) || inside(end) || inside(0.5 * (start + end));
+}
+
+} // namespace
+
+sla::HollowingConfig GLGizmoHollow::hollowing_config_from_object() const
+{
+    sla::HollowingConfig config;
+    const auto options = get_config_options({ "hollowing_min_thickness", "hollowing_quality", "hollowing_closing_distance" });
+    if (options.size() == 3 && options[0].first && options[1].first && options[2].first) {
+        config.min_thickness = static_cast<const ConfigOptionFloat*>(options[0].first)->value;
+        config.quality = static_cast<const ConfigOptionFloat*>(options[1].first)->value;
+        config.closing_distance = static_cast<const ConfigOptionFloat*>(options[2].first)->value;
+    }
+    return config;
+}
+
+void GLGizmoHollow::apply_volume_meshes(ModelObject* object, std::vector<std::pair<ModelVolume*, indexed_triangle_set>>& meshes)
+{
+    for (auto& mesh : meshes) {
+        mesh.first->set_mesh(std::move(mesh.second));
+        mesh.first->calculate_convex_hull();
+        mesh.first->set_new_unique_id();
+    }
+    object->invalidate_bounding_box();
+    m_selected.clear();
+    m_selection_empty = true;
+    unregister_hole_raycasters_for_picking();
+    const int object_idx = m_parent.get_selection().get_object_idx();
+    if (object_idx >= 0)
+        wxGetApp().plater()->changed_mesh(object_idx);
+    reload_cache();
+    m_parent.set_as_dirty();
+    m_parent.post_event(SimpleEvent(EVT_GLCANVAS_FORCE_UPDATE));
+}
+
+void GLGizmoHollow::hollow_object_mesh()
+{
+    ModelObject* object = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
+    if (object == nullptr)
+        return;
+
+    wxBusyCursor wait;
+    const sla::HollowingConfig config = hollowing_config_from_object();
+    std::vector<std::pair<ModelVolume*, indexed_triangle_set>> meshes;
+    bool failed = false;
+    for (ModelVolume* volume : object->volumes) {
+        if (volume == nullptr || !volume->is_model_part())
+            continue;
+        std::optional<indexed_triangle_set> shell = hollow_shell(object_space_mesh(*volume), config);
+        if (!shell) {
+            failed = true;
+            break;
+        }
+        back_to_volume_space(*shell, *volume);
+        meshes.emplace_back(volume, std::move(*shell));
+    }
+    if (failed || meshes.empty()) {
+        MessageDialog dialog(wxGetApp().plater(),
+            _L("The interior could not be emptied. The mesh needs to be a closed solid."),
+            _L("Hollowing & place drainage holes"), wxOK | wxICON_WARNING);
+        dialog.ShowModal();
+        return;
+    }
+
+    Plater::TakeSnapshot snapshot(wxGetApp().plater(), _L("Hollow the mesh"));
+    apply_volume_meshes(object, meshes);
+    object->config.set("hollowing_enable", false);
+    wxGetApp().obj_list()->update_and_show_object_settings_item();
+}
+
+void GLGizmoHollow::cut_holes_into_mesh()
+{
+    ModelObject* object = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
+    if (object == nullptr || object->sla_drain_holes.empty())
+        return;
+
+    wxBusyCursor wait;
+    // A nearby second surface is the inner wall of a hollow part.
+    const double max_wall = 30.;
+
+    struct CutVolume {
+        ModelVolume* volume;
+        indexed_triangle_set mesh;
+    };
+    std::vector<CutVolume> cuts;
+    const size_t hole_count = object->sla_drain_holes.size();
+    std::vector<bool> hole_seen(hole_count, false);
+    std::vector<bool> hole_solid(hole_count, false);
+    std::vector<bool> drilled_holes(hole_count, false);
+
+    for (ModelVolume* volume : object->volumes) {
+        if (volume == nullptr || !volume->is_model_part())
+            continue;
+        indexed_triangle_set working = object_space_mesh(*volume);
+        const AABBMesh walls(working);
+        bool changed = false;
+        for (size_t hole_index = 0; hole_index < hole_count; ++hole_index) {
+            const sla::DrainHole& stored = object->sla_drain_holes[hole_index];
+            if (!hole_meets_volume(*volume, stored))
+                continue;
+            hole_seen[hole_index] = true;
+            const Channel channel = through_channel(walls, stored, max_wall);
+            if (channel.fit == ChannelFit::Solid) {
+                hole_solid[hole_index] = true;
+                continue;
+            }
+            if (channel.fit != ChannelFit::Ready)
+                continue;
+            indexed_triangle_set attempt = working;
+            bool drilled = false;
+            try {
+                MeshBoolean::cgal::minus(attempt, channel.hole.to_mesh());
+                drilled = bounds_volume(attempt)
+                    && (attempt.indices.size() != working.indices.size() || attempt.vertices.size() != working.vertices.size());
+            } catch (const std::exception&) {
+                drilled = false;
+            } catch (...) {
+                drilled = false;
+            }
+            if (!drilled)
+                continue;
+            drilled_holes[hole_index] = true;
+            hole_solid[hole_index] = false;
+            working = std::move(attempt);
+            changed = true;
+        }
+        if (changed) {
+            back_to_volume_space(working, *volume);
+            cuts.push_back({ volume, std::move(working) });
+        }
+    }
+
+    int failed = 0;
+    int solid = 0;
+    for (size_t i = 0; i < hole_count; ++i) {
+        if (!hole_seen[i] || drilled_holes[i])
+            continue;
+        if (hole_solid[i])
+            ++solid;
+        else
+            ++failed;
+    }
+
+    if (cuts.empty()) {
+        const wxString message = (solid > 0 && failed == 0)
+            ? _L("Hollow the mesh first. These holes need an empty interior to drain into.")
+            : _L("The holes could not be drilled through this mesh.");
+        MessageDialog dialog(wxGetApp().plater(), message, _L("Hollowing & place drainage holes"), wxOK | wxICON_WARNING);
+        dialog.ShowModal();
+        return;
+    }
+
+    Plater::TakeSnapshot snapshot(wxGetApp().plater(), _L("Drill drain holes through the mesh"));
+    std::vector<std::pair<ModelVolume*, indexed_triangle_set>> meshes;
+    meshes.reserve(cuts.size());
+    for (CutVolume& cut : cuts)
+        meshes.emplace_back(cut.volume, std::move(cut.mesh));
+    for (int i = int(drilled_holes.size()) - 1; i >= 0; --i) {
+        if (drilled_holes[size_t(i)])
+            object->sla_drain_holes.erase(object->sla_drain_holes.begin() + i);
+    }
+    apply_volume_meshes(object, meshes);
+    if (failed > 0 || solid > 0) {
+        const wxString message = solid > 0
+            ? _L("Some holes still sit on a solid wall. Hollow the mesh, then drill those again. The other markers are still on the model.")
+            : _L("Some holes could not be drilled through. Those markers are still on the model.");
+        MessageDialog dialog(wxGetApp().plater(), message, _L("Hollowing & place drainage holes"), wxOK | wxICON_WARNING);
+        dialog.ShowModal();
+    }
 }
 
 void GLGizmoHollow::on_set_state()

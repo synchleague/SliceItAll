@@ -29,11 +29,11 @@
 #include <numeric>
 
 static const float GROUND_Z = -0.02f;
-static const Slic3r::ColorRGBA DEFAULT_MODEL_COLOR             = Slic3r::ColorRGBA::DARK_GRAY();
+static const Slic3r::ColorRGBA DEFAULT_MODEL_COLOR             = { 0.165f, 0.165f, 0.188f, 1.0f };
 static const Slic3r::ColorRGBA PICKING_MODEL_COLOR             = Slic3r::ColorRGBA::BLACK();
-static const Slic3r::ColorRGBA DEFAULT_SOLID_GRID_COLOR        = { 0.9f, 0.9f, 0.9f, 1.0f };
-static const Slic3r::ColorRGBA DEFAULT_TRANSPARENT_GRID_COLOR  = { 0.9f, 0.9f, 0.9f, 0.6f };
-static const Slic3r::ColorRGBA DISABLED_MODEL_COLOR            = { 0.6f, 0.6f, 0.6f, 0.75f };
+static const Slic3r::ColorRGBA DEFAULT_SOLID_GRID_COLOR        = { 0.72f, 0.72f, 0.78f, 1.0f };
+static const Slic3r::ColorRGBA DEFAULT_TRANSPARENT_GRID_COLOR  = { 0.72f, 0.72f, 0.78f, 0.55f };
+static const Slic3r::ColorRGBA DISABLED_MODEL_COLOR            = { 0.22f, 0.22f, 0.25f, 0.55f };
 
 namespace Slic3r {
 namespace GUI {
@@ -63,6 +63,9 @@ bool Bed3D::set_shape(const Pointfs& bed_shape, const double max_print_height, c
     }
 
     std::string texture_filename = custom_texture.empty() ? texture : custom_texture;
+    // Shipped plate art carries vendor names. Plates stay unbranded.
+    if (texture_filename.find("/profiles/") != std::string::npos || texture_filename.find("\\profiles\\") != std::string::npos)
+        texture_filename.clear();
     if (! texture_filename.empty() && ! check_texture(texture_filename)) {
         BOOST_LOG_TRIVIAL(error) << "Unable to load bed texture: " << texture_filename;
         texture_filename.clear();
@@ -93,6 +96,8 @@ bool Bed3D::set_shape(const Pointfs& bed_shape, const double max_print_height, c
     m_triangles.reset();
     m_gridlines.reset();
     m_contourlines.reset();
+    m_lip.reset();
+    m_logo.reset();
     m_texture.reset();
     m_model.reset();
 
@@ -101,6 +106,7 @@ bool Bed3D::set_shape(const Pointfs& bed_shape, const double max_print_height, c
 
     init_internal_model_from_file();
     init_triangles();
+    init_plate_marks();
 
     s_multiple_beds.update_build_volume(m_build_volume.bounding_volume2d());
 
@@ -230,6 +236,9 @@ void Bed3D::render_internal(GLCanvas3D& canvas, const Transform3d& view_matrix, 
     default:
     case Type::Custom: { render_custom(canvas, view_matrix, projection_matrix, bottom, show_texture, picking, active); break; }
     }
+
+    if (!bottom && !picking)
+        render_plate_marks(view_matrix, projection_matrix, active);
 
     glsafe(::glDisable(GL_DEPTH_TEST));
 }
@@ -391,9 +400,9 @@ std::tuple<Bed3D::Type, std::string, std::string> Bed3D::detect_type(const Point
             if (curr->config.has("bed_shape")) {
                 if (shape == dynamic_cast<const ConfigOptionPoints*>(curr->config.option("bed_shape"))->values) {
                     std::string model_filename = PresetUtils::system_printer_bed_model(*curr);
-                    std::string texture_filename = PresetUtils::system_printer_bed_texture(*curr);
-                    if (!model_filename.empty() && !texture_filename.empty())
-                        return { Type::System, model_filename, texture_filename };
+                    // Keep the physical plate model. Drop the vendor texture so no brand is painted on the bed.
+                    if (!model_filename.empty())
+                        return { Type::System, model_filename, {} };
                 }
             }
 
@@ -664,6 +673,127 @@ void Bed3D::render_contour(const Transform3d& view_matrix, const Transform3d& pr
 
         shader->stop_using();
     }
+}
+
+bool Bed3D::bed_model_has_front_lip() const
+{
+    if (m_model.model.get_filename().empty())
+        return false;
+    BoundingBoxf3 bb = m_model.model.get_bounding_box();
+    if (!bb.defined)
+        return false;
+    bb.translate(m_model_offset);
+    const BoundingBoxf bed = m_build_volume.bounding_volume2d();
+    return bed.defined && bb.min.y() < bed.min.y() - 4.0;
+}
+
+void Bed3D::init_plate_marks()
+{
+    m_lip.reset();
+    m_logo.reset();
+
+    const BoundingBoxf bed = m_build_volume.bounding_volume2d();
+    if (!bed.defined || bed.size().x() < 40.0 || bed.size().y() < 40.0)
+        return;
+
+    if (!bed_model_has_front_lip()) {
+        const float front = float(bed.min.y());
+        const float right = float(bed.max.x());
+        const float width = std::min(28.f, float(bed.size().x()) * 0.16f);
+        const float depth = std::min(16.f, float(bed.size().y()) * 0.07f);
+        const float inset = std::min(12.f, float(bed.size().x()) * 0.04f);
+        const float taper = width * 0.18f;
+        const float x1 = right - inset - width;
+        const float x2 = right - inset;
+        const float y0 = front;
+        const float y1 = front - depth;
+        const float z0 = -2.4f;
+        const float z1 = 0.15f;
+        const float x1n = x1 + taper;
+        const float x2n = x2 - taper;
+
+        GLModel::Geometry lip;
+        lip.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3 };
+        const Vec3f v[8] = {
+            { x1,  y0, z1 }, { x2,  y0, z1 }, { x2n, y1, z1 }, { x1n, y1, z1 },
+            { x1,  y0, z0 }, { x2,  y0, z0 }, { x2n, y1, z0 }, { x1n, y1, z0 }
+        };
+        for (const Vec3f& p : v)
+            lip.add_vertex(p);
+        const unsigned int faces[] = {
+            0, 1, 2,  0, 2, 3,
+            4, 7, 6,  4, 6, 5,
+            3, 2, 6,  3, 6, 7,
+            0, 5, 1,  0, 4, 5,
+            0, 3, 7,  0, 7, 4,
+            1, 5, 6,  1, 6, 2
+        };
+        for (size_t i = 0; i < sizeof(faces) / sizeof(faces[0]); i += 3)
+            lip.add_triangle(faces[i], faces[i + 1], faces[i + 2]);
+        m_lip.init_from(std::move(lip));
+        m_lip.set_color({ 0.34f, 0.34f, 0.38f, 1.f });
+        m_extended_bounding_box.merge(Vec3d(x2, y1, 0.0));
+    }
+
+    const float side = std::min(56.f, std::max(22.f, float(std::min(bed.size().x(), bed.size().y())) * 0.16f));
+    const float cx = float(bed.center().x());
+    const float cy = float(bed.center().y());
+    const float half = side * 0.5f;
+    const float z = 0.35f;
+    GLModel::Geometry logo;
+    logo.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3T2 };
+    logo.add_vertex(Vec3f(cx - half, cy - half, z), Vec2f(0.f, 1.f));
+    logo.add_vertex(Vec3f(cx + half, cy - half, z), Vec2f(1.f, 1.f));
+    logo.add_vertex(Vec3f(cx + half, cy + half, z), Vec2f(1.f, 0.f));
+    logo.add_vertex(Vec3f(cx - half, cy + half, z), Vec2f(0.f, 0.f));
+    logo.add_triangle(0, 1, 2);
+    logo.add_triangle(0, 2, 3);
+    m_logo.init_from(std::move(logo));
+}
+
+void Bed3D::render_plate_marks(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool active)
+{
+    if (!m_lip.is_initialized() && !m_logo.is_initialized())
+        init_plate_marks();
+
+    if (m_lip.is_initialized()) {
+        m_lip.set_color(active ? ColorRGBA(0.34f, 0.34f, 0.38f, 1.f) : ColorRGBA(0.22f, 0.22f, 0.25f, 0.55f));
+        GLShaderProgram* shader = wxGetApp().get_shader("flat");
+        if (shader != nullptr) {
+            shader->start_using();
+            shader->set_uniform("view_model_matrix", view_matrix);
+            shader->set_uniform("projection_matrix", projection_matrix);
+            glsafe(::glEnable(GL_DEPTH_TEST));
+            m_lip.render();
+            shader->stop_using();
+        }
+    }
+
+    if (!m_logo.is_initialized())
+        return;
+    if (m_logo_texture.get_id() == 0) {
+        const std::string path = resources_dir() + "/icons/bed_mark.svg";
+        if (!m_logo_texture.load_from_svg_file(path, false, false, false, 512))
+            return;
+    }
+    GLShaderProgram* shader = wxGetApp().get_shader("flat_texture");
+    if (shader == nullptr)
+        return;
+    shader->start_using();
+    shader->set_uniform("view_model_matrix", view_matrix);
+    shader->set_uniform("projection_matrix", projection_matrix);
+    glsafe(::glEnable(GL_DEPTH_TEST));
+    glsafe(::glEnable(GL_BLEND));
+    glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+    const bool cull = ::glIsEnabled(GL_CULL_FACE);
+    glsafe(::glDisable(GL_CULL_FACE));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, (GLuint)m_logo_texture.get_id()));
+    m_logo.render();
+    glsafe(::glBindTexture(GL_TEXTURE_2D, 0));
+    if (cull)
+        glsafe(::glEnable(GL_CULL_FACE));
+    glsafe(::glDisable(GL_BLEND));
+    shader->stop_using();
 }
 
 void Bed3D::register_raycasters_for_picking(const GLModel::Geometry& geometry, const Transform3d& trafo)
