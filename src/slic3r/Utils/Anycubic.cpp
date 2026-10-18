@@ -1336,11 +1336,11 @@ void absorb_job(const pt::ptree& data, AnycubicReadings& readings)
     }
     if (json_int_field(data, "curr_layer", number)) {
         readings.layer = number;
-        readings.has_layers = true;
+        readings.has_layer = true;
     }
     if (json_int_field(data, "total_layers", number)) {
         readings.layers = number;
-        readings.has_layers = true;
+        readings.has_total_layers = true;
     }
     if (json_int_field(data, "remain_time", number)) {
         readings.remain_minutes = number;
@@ -1574,7 +1574,11 @@ bool collect_status(const LanSession& session, AnycubicReadings& readings, std::
         // drops the slot colors, so the start sheet shows an empty rack.
         const bool sensors = readings.ace_reported && readings.has_nozzle && readings.has_bed
             && readings.has_model_fan && readings.has_light;
-        if (sensors && readings.has_job)
+        // The first print reply is often just the file name and a percent.
+        // Layer and remaining time follow in the info report, so keep reading
+        // while a job is on and those are still missing.
+        const bool job_detail = !readings.printing || (readings.has_layer && readings.has_total_layers && readings.has_remain && readings.has_elapsed);
+        if (sensors && readings.has_job && job_detail)
             break;
         // The job reply can follow the temperatures. Wait briefly for it, then give up
         // so an idle printer that never sends a print report does not stall the poll.

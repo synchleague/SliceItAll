@@ -2240,15 +2240,35 @@ void store_control_reading(const std::string& id, const AnycubicReadings& fetche
     if (fetched.has_ace_count)
         reading.ace_units = fetched.ace_count;
     if (fetched.has_job) {
+        const wxString job_name = from_u8(fetched.job_name);
+        const bool replaced = !job_name.empty() && job_name != reading.job_name;
         reading.local = false;
         reading.job_known = true;
         reading.printing = fetched.printing;
-        reading.job_name = from_u8(fetched.job_name);
-        reading.progress = fetched.has_progress ? fetched.progress : -1;
-        reading.layer = fetched.layer;
-        reading.layers = fetched.layers;
-        reading.remain_minutes = fetched.has_remain ? fetched.remain_minutes : -1;
-        reading.elapsed_minutes = fetched.has_elapsed ? fetched.elapsed_minutes : -1;
+        if (!job_name.empty())
+            reading.job_name = job_name;
+        if (fetched.has_progress)
+            reading.progress = fetched.progress;
+        else if (replaced)
+            reading.progress = -1;
+        // A later reply can repeat the file name and the percent without the
+        // layer or the clock. Keep the last figures until a different job starts.
+        if (fetched.has_layer)
+            reading.layer = fetched.layer;
+        else if (replaced)
+            reading.layer = 0;
+        if (fetched.has_total_layers)
+            reading.layers = fetched.layers;
+        else if (replaced)
+            reading.layers = 0;
+        if (fetched.has_remain)
+            reading.remain_minutes = fetched.remain_minutes;
+        else if (replaced)
+            reading.remain_minutes = -1;
+        if (fetched.has_elapsed)
+            reading.elapsed_minutes = fetched.elapsed_minutes;
+        else if (replaced)
+            reading.elapsed_minutes = -1;
     }
     remember_printer_activity(id, fetched);
     notify_camera_watchers(id);
@@ -2733,16 +2753,14 @@ void fill_print_task(wxPanel* card, const DeviceEntry& device)
     card_add(card, job);
     auto* track = new JobTrack(card);
     card_add(card, track);
-    auto* stats = new wxWrapSizer(wxHORIZONTAL);
+    // Each fact takes the whole card. A shared row was squeezed to a few
+    // dozen pixels, so "Layers  12 / 184" drew as "Layers".
     auto* layers_line = muted_line(card, _L("Layers  —"));
     auto* time_line = muted_line(card, _L("Time  — / —"));
     auto* finish_line = muted_line(card, _L("Finishes  —"));
-    stats->Add(layers_line, 0, wxALIGN_CENTER_VERTICAL);
-    stats->AddSpacer(18);
-    stats->Add(time_line, 0, wxALIGN_CENTER_VERTICAL);
-    stats->AddSpacer(18);
-    stats->Add(finish_line, 0, wxALIGN_CENTER_VERTICAL);
-    card->GetSizer()->Add(stats, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 8);
+    card_add(card, layers_line);
+    card_add(card, time_line);
+    card_add(card, finish_line);
     const wxString offline_note = _L("No network connection. Export a file and choose Track it to show the estimate here.");
     auto* note = muted_line(card, device.host.empty() ? offline_note : wxString());
     card_add(card, note);
@@ -2757,6 +2775,8 @@ void fill_print_task(wxPanel* card, const DeviceEntry& device)
     if (!linked) {
         stop = new wxButton(card, wxID_ANY, _L("Stop task"));
         wxGetApp().UpdateDarkUI(stop, true);
+        const wxSize stop_best = stop->GetBestSize();
+        stop->SetMinSize(wxSize(std::max(128, stop_best.x + 12), std::max(34, stop_best.y)));
         stop->SetToolTip(_L("Clear this tracked task. The printer is not contacted, so a print that already started there keeps going."));
         stop->Hide();
         card->GetSizer()->Add(stop, 0, wxLEFT | wxRIGHT | wxTOP, 8);
@@ -3240,6 +3260,9 @@ void fit_cards_inside(wxScrolledWindow* host, int preferred)
 const char* k_local_device = "local";
 const char* k_recent_module = "recent_projects";
 const char* k_stack_module = "vertical";
+// Previews stay this size. A longer list scrolls; it does not shrink the pictures.
+constexpr int k_project_thumb_w = 216;
+constexpr int k_project_thumb_h = 162;
 
 wxImage load_project_preview(const wxString& path)
 {
@@ -3299,17 +3322,117 @@ public:
         , m_alive(std::make_shared<bool>(true))
     {
         bind_card_chrome(this);
-        SetMinSize(wxSize(120, 120));
+        int name_h = 22;
+        {
+            wxClientDC dc(this);
+            dc.SetFont(wxGetApp().bold_font());
+            name_h = std::max(name_h, dc.GetTextExtent("Ag").GetHeight());
+        }
+        const int scrollbar = std::max(16, wxSystemSettings::GetMetric(wxSYS_HSCROLL_Y));
+        m_name_h = name_h;
+        const int tile_h = 4 + k_project_thumb_h + 4 + name_h + 4;
+        m_tile_h = tile_h;
+        const int scroll_h = tile_h + scrollbar;
+        // Bottom inset of 8, matching the sizer border below the scroller.
+        const int body_h = scroll_h + 8;
+        m_best = wxSize(48, body_h);
+        SetMinSize(m_best);
+        SetMaxSize(wxSize(-1, body_h));
+
         auto* sizer = new wxBoxSizer(wxVERTICAL);
         m_scroll = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHSCROLL | wxBORDER_NONE);
-        m_scroll->SetMinSize(wxSize(48, 48));
-        m_scroll->SetScrollRate(20, 0);
+        m_scroll->SetScrollRate(24, 0);
+        m_scroll->EnableScrolling(true, false);
+        m_scroll->ShowScrollbars(wxSHOW_SB_DEFAULT, wxSHOW_SB_NEVER);
+        m_scroll->SetMinSize(wxSize(48, scroll_h));
+        m_scroll->SetMaxSize(wxSize(-1, scroll_h));
         m_scroll->SetBackgroundColour(k_card);
-        m_strip = new wxBoxSizer(wxHORIZONTAL);
-        m_scroll->SetSizer(m_strip);
+        // Tiles are positioned by hand. A sizer on this scroller lays them out
+        // to the visible width, and while the dashboard is hidden that width
+        // can be tiny. The pictures then stay crushed after the dashboard returns.
         sizer->Add(m_scroll, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
         SetSizer(sizer);
+        m_scroll->Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& event) { on_wheel(event); });
+        Bind(wxEVT_SIZE, [this](wxSizeEvent& event) {
+            event.Skip();
+            if (m_scroll_pending)
+                return;
+            m_scroll_pending = true;
+            std::shared_ptr<bool> alive = m_alive;
+            CallAfter([this, alive]() {
+                if (!*alive)
+                    return;
+                m_scroll_pending = false;
+                place_tiles();
+            });
+        });
+        Bind(wxEVT_SHOW, [this](wxShowEvent& event) {
+            event.Skip();
+            if (event.IsShown())
+                place_tiles();
+        });
 
+        populate();
+    }
+
+    void sync_from_config()
+    {
+        std::vector<wxString> paths;
+        if (wxGetApp().app_config) {
+            for (const std::string& path : wxGetApp().app_config->get_recent_projects()) {
+                if (paths.size() >= 10)
+                    break;
+                paths.emplace_back(from_u8(path));
+            }
+        }
+        if (paths.size() == m_items.size()) {
+            bool same = true;
+            for (size_t i = 0; i < paths.size(); ++i) {
+                if (paths[i] != m_items[i].path) {
+                    same = false;
+                    break;
+                }
+            }
+            if (same)
+                return;
+        }
+        wxWindowUpdateLocker lock(this);
+        populate();
+    }
+
+    ~RecentProjectsCard() override
+    {
+        *m_alive = false;
+    }
+
+    wxSize DoGetBestSize() const override
+    {
+        return m_best;
+    }
+
+    void restore_layout()
+    {
+        place_tiles();
+    }
+
+private:
+    struct Item {
+        wxString path;
+        wxImage source;
+        bool exists { false };
+        wxPanel* tile { nullptr };
+        wxStaticBitmap* thumb { nullptr };
+        wxStaticText* name { nullptr };
+    };
+
+    void populate()
+    {
+        m_items.clear();
+        m_empty = nullptr;
+        if (m_scroll)
+            m_scroll->DestroyChildren();
+        m_virtual_w = -1;
+        m_virtual_h = -1;
         if (wxGetApp().app_config) {
             for (const std::string& path : wxGetApp().app_config->get_recent_projects()) {
                 if (m_items.size() >= 10)
@@ -3322,30 +3445,31 @@ public:
             }
         }
         if (m_items.empty()) {
-            auto* empty = new wxStaticText(m_scroll, wxID_ANY, _L("No projects have been opened yet."));
-            empty->SetForegroundColour(wxColour(180, 180, 188));
-            empty->SetBackgroundColour(k_card);
-            empty->SetMinSize(wxSize(40, -1));
-            m_strip->Add(empty, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 8);
+            m_empty = new wxStaticText(m_scroll, wxID_ANY, _L("No projects have been opened yet."));
+            m_empty->SetForegroundColour(wxColour(180, 180, 188));
+            m_empty->SetBackgroundColour(k_card);
         }
         for (Item& item : m_items) {
-            auto* tile = new wxPanel(m_scroll, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+            auto* tile = new wxPanel(m_scroll, wxID_ANY, wxDefaultPosition, wxSize(k_project_thumb_w, m_tile_h), wxBORDER_NONE);
             tile->SetBackgroundColour(k_card);
             tile->SetToolTip(item.path);
+            tile->SetMinSize(wxSize(k_project_thumb_w, m_tile_h));
+            tile->SetMaxSize(wxSize(k_project_thumb_w, m_tile_h));
             if (item.exists)
                 tile->SetCursor(wxCURSOR_HAND);
-            auto* tile_sizer = new wxBoxSizer(wxVERTICAL);
-            item.thumb = new wxStaticBitmap(tile, wxID_ANY, preview_bitmap(item.source, 216, 162));
+            item.thumb = new wxStaticBitmap(tile, wxID_ANY, preview_bitmap(item.source, k_project_thumb_w, k_project_thumb_h),
+                wxPoint(0, 4), wxSize(k_project_thumb_w, k_project_thumb_h));
             item.thumb->SetBackgroundColour(k_card);
-            tile_sizer->Add(item.thumb, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP, 4);
+            item.thumb->SetMinSize(wxSize(k_project_thumb_w, k_project_thumb_h));
+            item.thumb->SetMaxSize(wxSize(k_project_thumb_w, k_project_thumb_h));
             item.name = new wxStaticText(tile, wxID_ANY, wxFileName(item.path).GetFullName(),
-                wxDefaultPosition, wxDefaultSize, wxALIGN_CENTER_HORIZONTAL | wxST_ELLIPSIZE_END);
+                wxPoint(0, 8 + k_project_thumb_h), wxSize(k_project_thumb_w, m_name_h), wxALIGN_CENTER_HORIZONTAL | wxST_ELLIPSIZE_END);
             item.name->SetFont(wxGetApp().bold_font());
             item.name->SetForegroundColour(item.exists ? *wxWHITE : wxColour(140, 140, 148));
             item.name->SetBackgroundColour(k_card);
             item.name->SetToolTip(item.path);
-            tile_sizer->Add(item.name, 0, wxEXPAND | wxTOP | wxBOTTOM, 4);
-            tile->SetSizer(tile_sizer);
+            item.name->SetMinSize(wxSize(k_project_thumb_w, m_name_h));
+            item.name->SetMaxSize(wxSize(k_project_thumb_w, m_name_h));
             if (item.exists) {
                 const wxString path = item.path;
                 auto open = [path](wxMouseEvent&) {
@@ -3362,44 +3486,10 @@ public:
             tile->Bind(wxEVT_MOUSEWHEEL, wheel);
             item.thumb->Bind(wxEVT_MOUSEWHEEL, wheel);
             item.name->Bind(wxEVT_MOUSEWHEEL, wheel);
-            m_strip->Add(tile, 0, wxEXPAND | wxRIGHT, 10);
             item.tile = tile;
         }
-        m_scroll->Bind(wxEVT_MOUSEWHEEL, [this](wxMouseEvent& event) { on_wheel(event); });
-        Bind(wxEVT_SIZE, [this](wxSizeEvent& event) {
-            event.Skip();
-            if (m_layout_pending || m_items.empty())
-                return;
-            m_layout_pending = true;
-            std::shared_ptr<bool> alive = m_alive;
-            CallAfter([this, alive]() {
-                if (!*alive)
-                    return;
-                m_layout_pending = false;
-                relayout();
-            });
-        });
+        place_tiles();
     }
-
-    ~RecentProjectsCard() override
-    {
-        *m_alive = false;
-    }
-
-    wxSize DoGetBestSize() const override
-    {
-        return GetMinSize();
-    }
-
-private:
-    struct Item {
-        wxString path;
-        wxImage source;
-        bool exists { false };
-        wxPanel* tile { nullptr };
-        wxStaticBitmap* thumb { nullptr };
-        wxStaticText* name { nullptr };
-    };
 
     void on_wheel(wxMouseEvent& event)
     {
@@ -3416,58 +3506,56 @@ private:
         m_scroll->Scroll(std::max(0, x - delta * 3), y);
     }
 
-    void relayout()
+    void place_tiles()
     {
-        if (!m_scroll || m_items.empty())
+        if (!m_scroll || m_in_scroll)
             return;
-        const int client_h = GetClientSize().GetHeight();
-        const int client_w = GetClientSize().GetWidth();
-        if (client_h < 48 || client_w < 48)
-            return;
-        const int count = int(m_items.size());
-        const int gap = 10;
-        int thumb_h = std::max(72, client_h - 64);
-        int thumb_w = std::max(72, thumb_h * 4 / 3);
-        const int natural = count * thumb_w + std::max(0, count - 1) * gap;
-        if (count > 0 && natural > client_w - 8) {
-            thumb_w = std::max(48, (client_w - 8 - std::max(0, count - 1) * gap) / count);
-            thumb_h = std::max(36, thumb_w * 3 / 4);
-        } else if (count > 0) {
-            const int grown = std::max(thumb_w, (client_w - 8 - std::max(0, count - 1) * gap) / count);
-            const int grown_h = grown * 3 / 4;
-            if (grown_h + 48 <= client_h) {
-                thumb_w = grown;
-                thumb_h = grown_h;
-            }
-        }
-        if (thumb_h == m_laid_out_h && thumb_w == m_laid_out_w)
-            return;
-        m_laid_out_h = thumb_h;
-        m_laid_out_w = thumb_w;
-        const int tile_h = thumb_h + 36;
+        m_in_scroll = true;
+        int x = 0;
         for (Item& item : m_items) {
-            if (!item.tile || !item.thumb || !item.name)
+            if (!item.tile)
                 continue;
-            item.thumb->SetBitmap(preview_bitmap(item.source, thumb_w, thumb_h));
-            item.thumb->SetMinSize(wxSize(thumb_w, thumb_h));
-            item.thumb->SetMaxSize(wxSize(thumb_w, thumb_h));
-            item.name->SetMinSize(wxSize(thumb_w, 22));
-            item.name->SetMaxSize(wxSize(thumb_w, 22));
-            item.tile->SetMinSize(wxSize(thumb_w, tile_h));
-            item.tile->SetMaxSize(wxSize(thumb_w, tile_h));
+            item.tile->SetSize(x, 0, k_project_thumb_w, m_tile_h);
+            if (item.thumb)
+                item.thumb->SetSize(0, 4, k_project_thumb_w, k_project_thumb_h);
+            if (item.name)
+                item.name->SetSize(0, 8 + k_project_thumb_h, k_project_thumb_w, m_name_h);
+            x += k_project_thumb_w + 10;
         }
-        m_scroll->Layout();
-        m_scroll->FitInside();
+        if (m_empty)
+            m_empty->SetSize(8, std::max(0, (m_tile_h - m_name_h) / 2), 280, m_name_h);
+        const int width = std::max(m_items.empty() ? 300 : x, 1);
+        const int height = std::max(m_tile_h, 1);
+        m_virtual_w = width;
+        m_virtual_h = height;
+        m_scroll->SetVirtualSize(width, height);
+        m_in_scroll = false;
     }
 
     wxScrolledWindow* m_scroll { nullptr };
-    wxBoxSizer* m_strip { nullptr };
+    wxStaticText* m_empty { nullptr };
     std::vector<Item> m_items;
     std::shared_ptr<bool> m_alive;
-    bool m_layout_pending { false };
-    int m_laid_out_h { -1 };
-    int m_laid_out_w { -1 };
+    wxSize m_best;
+    int m_name_h { 22 };
+    int m_tile_h { 0 };
+    int m_virtual_w { -1 };
+    int m_virtual_h { -1 };
+    bool m_scroll_pending { false };
+    bool m_in_scroll { false };
 };
+
+void restore_recent_project_tiles(wxWindow* window)
+{
+    if (!window)
+        return;
+    if (auto* card = dynamic_cast<RecentProjectsCard*>(window)) {
+        card->restore_layout();
+        return;
+    }
+    for (wxWindowList::const_iterator it = window->GetChildren().begin(); it != window->GetChildren().end(); ++it)
+        restore_recent_project_tiles(*it);
+}
 
 } // namespace
 
@@ -4209,11 +4297,29 @@ DevicesPanel::DevicesPanel(wxWindow* parent)
     root->Add(right, 1, wxEXPAND);
     outer->Add(root, 1, wxEXPAND);
     SetSizer(outer);
+#ifdef __WINDOWS__
+    SetDoubleBuffered(true);
+#endif
 
-    Bind(wxEVT_SHOW, [this](wxShowEvent& evt) {
-        evt.Skip();
-        if (evt.IsShown())
-            rebuild_lists();
+    m_loading = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+    m_loading->SetBackgroundColour(m_canvas->GetBackgroundColour());
+    auto* loading_sizer = new wxBoxSizer(wxVERTICAL);
+    auto* loading_label = new wxStaticText(m_loading, wxID_ANY, _L("Loading dashboard"));
+    loading_label->SetFont(wxGetApp().bold_font());
+    loading_label->SetForegroundColour(*wxWHITE);
+    loading_label->SetBackgroundColour(m_loading->GetBackgroundColour());
+    loading_sizer->AddStretchSpacer(1);
+    loading_sizer->Add(loading_label, 0, wxALIGN_CENTER);
+    loading_sizer->AddStretchSpacer(1);
+    m_loading->SetSizer(loading_sizer);
+    m_loading->Hide();
+
+    Bind(wxEVT_SIZE, [this](wxSizeEvent& event) {
+        event.Skip();
+        if (m_loading && m_loading->IsShown()) {
+            m_loading->SetSize(GetClientSize());
+            m_loading->Raise();
+        }
     });
     Bind(wxEVT_SIZE, [left](wxSizeEvent& event) {
         event.Skip();
@@ -4368,9 +4474,118 @@ void DevicesPanel::refresh_selected()
     refresh_device(m_selected_id);
 }
 
+void DevicesPanel::begin_visible_rebuild()
+{
+    const bool outer = m_rebuild_depth++ == 0;
+    if (!outer || m_rebuild_covered)
+        return;
+    if (!IsShownOnScreen() || m_loading == nullptr)
+        return;
+    m_rebuild_covered = true;
+    m_loading->SetSize(GetClientSize());
+    m_loading->Raise();
+    m_loading->Show();
+    m_loading->Layout();
+    Update();
+    Freeze();
+}
+
+void DevicesPanel::end_visible_rebuild()
+{
+    if (m_rebuild_depth <= 0)
+        return;
+    if (--m_rebuild_depth > 0)
+        return;
+    if (!m_rebuild_covered)
+        return;
+    m_rebuild_covered = false;
+    if (m_loading)
+        m_loading->Hide();
+    Thaw();
+}
+
+void DevicesPanel::sync_recent_projects()
+{
+    if (!m_canvas)
+        return;
+    std::function<RecentProjectsCard*(wxWindow*)> find = [&](wxWindow* window) -> RecentProjectsCard* {
+        if (auto* card = dynamic_cast<RecentProjectsCard*>(window))
+            return card;
+        for (wxWindowList::const_iterator it = window->GetChildren().begin(); it != window->GetChildren().end(); ++it) {
+            if (RecentProjectsCard* found = find(*it))
+                return found;
+        }
+        return nullptr;
+    };
+    if (RecentProjectsCard* card = find(m_canvas))
+        card->sync_from_config();
+}
+
+void DevicesPanel::paint_device_status(const std::string& id)
+{
+    DeviceEntry* device = nullptr;
+    for (DeviceEntry& entry : m_devices) {
+        if (entry.id != id)
+            continue;
+        device = &entry;
+        break;
+    }
+    if (!device)
+        return;
+    const auto found = m_checks.find(id);
+    if (found != m_checks.end()) {
+        device->status = found->second.status;
+        device->reported = found->second.reported;
+        device->detail = found->second.detail;
+    }
+    const auto live = control_readings().find(id);
+    if (live != control_readings().end() && live->second.job_known && live->second.printing)
+        device->status = "Printing";
+
+    if (m_device_rows) {
+        for (size_t i = 0; i < m_device_rows->GetItemCount(); ++i) {
+            wxSizerItem* item = m_device_rows->GetItem(i);
+            auto* card = item ? dynamic_cast<DeviceCard*>(item->GetWindow()) : nullptr;
+            if (!card || card->device_id() != id)
+                continue;
+            card->set_status(list_status_label(device->status), status_colour(device->status, !device->host.empty()));
+            break;
+        }
+    }
+    if (m_view == 0 && id == m_selected_id && m_detail && m_detail->IsShown()) {
+        wxWindowUpdateLocker lock(m_detail);
+        show_selected_device();
+    }
+}
+
 void DevicesPanel::on_tab_activated()
 {
-    rebuild_lists();
+    const std::vector<DeviceEntry> latest = bound_devices();
+    bool same = latest.size() == m_devices.size();
+    if (same) {
+        for (const DeviceEntry& device : latest) {
+            const auto found = std::find_if(m_devices.begin(), m_devices.end(), [&](const DeviceEntry& item) {
+                return item.id == device.id;
+            });
+            if (found == m_devices.end()
+                || found->name != device.name
+                || found->host != device.host
+                || found->brand != device.brand
+                || found->model != device.model
+                || found->link != device.link
+                || found->active != device.active
+                || found->offline != device.offline
+                || found->resin != device.resin) {
+                same = false;
+                break;
+            }
+        }
+    }
+    if (same)
+        sync_recent_projects();
+    else
+        rebuild_lists();
+
     std::vector<std::string> ids;
     ids.reserve(m_devices.size());
     for (const DeviceEntry& device : m_devices)
@@ -4394,7 +4609,7 @@ void DevicesPanel::refresh_device(const std::string& id)
         check.status = "Offline";
         check.detail = into_u8(_L("Offline printer. There is no network address. Export a file and choose Track it to show the print here."));
         m_checks[device_id] = std::move(check);
-        rebuild_lists();
+        paint_device_status(device_id);
         return;
     }
 
@@ -4423,7 +4638,7 @@ void DevicesPanel::refresh_device(const std::string& id)
     ++m_checks_in_flight;
     if (m_reload)
         m_reload->Enable(false);
-    rebuild_lists();
+    paint_device_status(device_id);
 
     std::shared_ptr<bool> alive = m_alive;
     std::thread([alive, this, id = device_id, generation, config, resin_sl1]() {
@@ -4468,7 +4683,7 @@ void DevicesPanel::refresh_device(const std::string& id)
             found->second.detail = detail;
             if (resin_sl1)
                 found->second.detail += into_u8(_L("\n\nThis is a resin printer, so the test used the SL1 connection. That is the connection used when a print is sent."));
-            rebuild_lists();
+            paint_device_status(id);
         });
     }).detach();
 }
@@ -4481,6 +4696,7 @@ void DevicesPanel::adopt_selected_offline_printer()
 
 void DevicesPanel::rebuild_lists()
 {
+    RebuildCover cover(this);
     refresh_offline_jobs(false);
     m_devices = bound_devices();
     for (DeviceEntry& device : m_devices) {
@@ -4595,6 +4811,8 @@ void DevicesPanel::show_mode()
     if (m_edit)
         m_edit->Show(dashboard);
     Layout();
+    if (dashboard)
+        restore_recent_project_tiles(m_canvas);
 }
 
 void DevicesPanel::show_selected_device()
@@ -5084,6 +5302,23 @@ bool release_min_width(wxWindow* window, int floor)
         wxWindow* child = *it;
         if (!child)
             continue;
+        // Project previews keep a fixed size and scroll. Capping their minimum
+        // width would squash the pictures back down to the card.
+        if (dynamic_cast<RecentProjectsCard*>(child) != nullptr)
+            continue;
+        // A button's minimum width is its label. Capping that at the floor clips
+        // the text, which is what made "Stop task" unreadable.
+        if (dynamic_cast<wxButton*>(child) != nullptr)
+            continue;
+        // The same is true of a label. "Drying" was cut to "Dryin" because the
+        // row sized it to this floor. Wrapped and ellipsized lines already have
+        // a small minimum, so they can still shrink with the window.
+        if (auto* text = dynamic_cast<wxStaticText*>(child)) {
+            const long style = text->GetWindowStyleFlag();
+            const bool may_shrink = (style & (wxST_ELLIPSIZE_START | wxST_ELLIPSIZE_MIDDLE | wxST_ELLIPSIZE_END | wxST_NO_AUTORESIZE)) != 0;
+            if (!may_shrink)
+                continue;
+        }
         const wxSize min = child->GetMinSize();
         const int width = (min.x <= 0 || min.x > floor) ? floor : min.x;
         if (min.x != width) {
@@ -5093,6 +5328,51 @@ bool release_min_width(wxWindow* window, int floor)
         changed = release_min_width(child, floor) || changed;
     }
     return changed;
+}
+
+void invalidate_best_size(wxWindow* window)
+{
+    if (!window)
+        return;
+    window->InvalidateBestSize();
+    for (wxWindowList::const_iterator it = window->GetChildren().begin(); it != window->GetChildren().end(); ++it)
+        invalidate_best_size(*it);
+}
+
+void classify_dashboard_row(wxWindow* window, bool& fixed, bool& stretch)
+{
+    if (!window)
+        return;
+    const wxString name = window->GetName();
+    if (name == "dash-fixed")
+        fixed = true;
+    else if (name == "dash-stretch")
+        stretch = true;
+    for (wxWindowList::const_iterator it = window->GetChildren().begin(); it != window->GetChildren().end(); ++it)
+        classify_dashboard_row(*it, fixed, stretch);
+}
+
+int fixed_card_height(wxWindow* window)
+{
+    if (!window)
+        return 0;
+    int height = window->GetName() == "dash-fixed" ? std::max(0, window->GetMinSize().GetHeight()) : 0;
+    for (wxWindowList::const_iterator it = window->GetChildren().begin(); it != window->GetChildren().end(); ++it)
+        height = std::max(height, fixed_card_height(*it));
+    return height;
+}
+
+// Drop a forced row height so the sizer can report the cards' own size.
+int natural_row_height(wxWindow* panel)
+{
+    if (!panel)
+        return 0;
+    const wxSize saved = panel->GetMinSize();
+    panel->SetMinSize(wxSize(48, -1));
+    invalidate_best_size(panel);
+    const int height = std::max(1, panel->GetBestSize().GetHeight());
+    panel->SetMinSize(saved);
+    return height;
 }
 
 } // namespace
@@ -5109,35 +5389,67 @@ void DevicesPanel::scale_dashboard_modules()
         return;
 
     const int count = int(m_dash_rows.size());
+    std::vector<int> weights(count, 0);
+    std::vector<int> row_h(count, 0);
     int weight_sum = 0;
-    std::vector<int> weights(count, 280);
+    int fixed_sum = 0;
+    m_scaling_dashboard = true;
     for (int i = 0; i < count; ++i) {
+        wxWindow* panel = m_dash_rows[size_t(i)].second;
+        if (!panel)
+            continue;
+        bool fixed = false;
+        bool stretch = false;
+        classify_dashboard_row(panel, fixed, stretch);
+        // A recent-projects row stays as tall as its previews. Other rows share
+        // the space left in the window.
+        if (fixed && !stretch) {
+            const int card_h = fixed_card_height(panel);
+            const int least = card_h > 0 ? card_h + (m_dashboard_edit ? 48 : 12) : 1;
+            int natural = natural_row_height(panel);
+            if (card_h > 0 && natural > card_h * 3)
+                natural = least;
+            row_h[i] = std::max(least, natural);
+            fixed_sum += row_h[i];
+            continue;
+        }
         const int index = m_dash_rows[size_t(i)].first;
+        int weight = 280;
         if (index >= 0 && index < int(m_rows.size()) && m_rows[size_t(index)].height >= 140)
-            weights[i] = m_rows[size_t(index)].height;
-        weight_sum += weights[i];
+            weight = m_rows[size_t(index)].height;
+        weights[i] = weight;
+        weight_sum += weight;
     }
     int chrome = 8 * count + 16;
     if (m_dashboard_edit)
         chrome += 56;
-    int available = client_h - chrome;
+    int available = client_h - chrome - fixed_sum;
     const int floor_h = 140;
-    if (available < count * floor_h)
-        available = count * floor_h;
+    int stretch_count = 0;
+    for (int weight : weights)
+        if (weight > 0)
+            ++stretch_count;
+    if (stretch_count > 0 && available < stretch_count * floor_h)
+        available = stretch_count * floor_h;
 
-    m_scaling_dashboard = true;
     bool changed = false;
     for (int i = 0; i < count; ++i) {
         wxWindow* panel = m_dash_rows[size_t(i)].second;
         if (!panel)
             continue;
-        const int row_h = std::max(floor_h, available * weights[i] / std::max(1, weight_sum));
+        int height = row_h[i];
+        if (weights[i] > 0) {
+            height = std::max(floor_h, available * weights[i] / std::max(1, weight_sum));
+            const int need = fixed_card_height(panel);
+            if (need > 0)
+                height = std::max(height, need + (m_dashboard_edit ? 56 : 16));
+        }
         const wxSize min = panel->GetMinSize();
-        if (min.GetWidth() != 48 || min.GetHeight() != row_h) {
-            panel->SetMinSize(wxSize(48, row_h));
+        if (min.GetWidth() != 48 || min.GetHeight() != height) {
+            panel->SetMinSize(wxSize(48, height));
             changed = true;
         }
-        if (limit_cameras(panel, std::max(120, row_h - 72)))
+        if (limit_cameras(panel, std::max(120, height - 72)))
             changed = true;
         if (release_min_width(panel, 48))
             changed = true;
@@ -5152,6 +5464,7 @@ void DevicesPanel::scale_dashboard_modules()
 
 void DevicesPanel::rebuild_dashboard()
 {
+    RebuildCover cover(this);
     if (!m_palette || !m_canvas_sizer)
         return;
     m_rebuilding_dashboard = true;
@@ -5240,6 +5553,7 @@ void DevicesPanel::rebuild_dashboard()
             auto* card = new wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxCLIP_CHILDREN);
             wxGetApp().UpdateDarkUI(card);
             auto* card_sizer = new wxBoxSizer(wxVERTICAL);
+            bool fixed_projects = false;
             const int drag_row = row_index;
             auto add_remove = [&](wxSizer* header) {
                 if (!m_dashboard_edit)
@@ -5314,12 +5628,23 @@ void DevicesPanel::rebuild_dashboard()
                     body = make_placeholder(card, module->title,
                         _L("This module could not be opened. Placing it does not contact the printer."));
                 }
-                card_sizer->Add(body, 1, wxEXPAND);
+                fixed_projects = dynamic_cast<RecentProjectsCard*>(body) != nullptr;
+                if (!fixed_projects)
+                    card->SetName("dash-stretch");
+                card_sizer->Add(body, fixed_projects ? 0 : 1, wxEXPAND);
             }
             card->SetSizer(card_sizer);
             // An explicit width keeps a long label or a row of spools from
             // becoming the module's minimum and pushing the next module off screen.
-            card->SetMinSize(wxSize(64, -1));
+            if (fixed_projects) {
+                card->SetName("dash-fixed");
+                card->InvalidateBestSize();
+                const int card_h = std::max(1, card->GetBestSize().GetHeight());
+                card->SetMinSize(wxSize(64, card_h));
+                card->SetMaxSize(wxSize(-1, card_h));
+            } else {
+                card->SetMinSize(wxSize(64, -1));
+            }
             return card;
         };
 

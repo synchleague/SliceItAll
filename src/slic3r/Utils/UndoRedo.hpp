@@ -163,6 +163,8 @@ public:
 
 	// Resets the "dirty project" status.
     void   mark_current_as_saved();
+    // Crash recovery loads a project that was never saved by the user.
+    void   mark_current_as_unsaved();
     // Is the project modified with regard to the last "saved" state marked with mark_current_as_saved()?
     bool   project_modified() const;
 

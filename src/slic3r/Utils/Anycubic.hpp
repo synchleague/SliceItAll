@@ -50,7 +50,8 @@ struct AnycubicReadings
     bool has_job { false };
     bool printing { false };
     bool has_progress { false };
-    bool has_layers { false };
+    bool has_layer { false };
+    bool has_total_layers { false };
     bool has_remain { false };
     bool has_elapsed { false };
     std::string job_name;

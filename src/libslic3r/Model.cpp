@@ -115,6 +115,16 @@ void Model::update_links_bottom_up_recursive()
 	}
 }
 
+void Model::ensure_beds(int count)
+{
+    if (count < 1)
+        return;
+    if ((int)wipe_tower_vector.size() < count)
+        wipe_tower_vector.resize(size_t(count));
+    if ((int)custom_gcode_per_print_z_vector.size() < count)
+        custom_gcode_per_print_z_vector.resize(size_t(count));
+}
+
 ModelWipeTower& Model::wipe_tower()
 {
     return const_cast<ModelWipeTower&>(const_cast<const Model*>(this)->wipe_tower());
@@ -122,11 +132,14 @@ ModelWipeTower& Model::wipe_tower()
 
 const ModelWipeTower& Model::wipe_tower() const
 {
-    return wipe_tower_vector[s_multiple_beds.get_active_bed()];
+    const int bed = std::max(0, s_multiple_beds.get_active_bed());
+    const_cast<Model*>(this)->ensure_beds(bed + 1);
+    return wipe_tower_vector[bed];
 }
 
 const ModelWipeTower& Model::wipe_tower(const int bed_index) const
 {
+    const_cast<Model*>(this)->ensure_beds(bed_index + 1);
     return wipe_tower_vector[bed_index];
 }
 
@@ -142,7 +155,9 @@ CustomGCode::Info& Model::custom_gcode_per_print_z()
 
 const CustomGCode::Info& Model::custom_gcode_per_print_z() const
 {
-    return custom_gcode_per_print_z_vector[s_multiple_beds.get_active_bed()];
+    const int bed = std::max(0, s_multiple_beds.get_active_bed());
+    const_cast<Model*>(this)->ensure_beds(bed + 1);
+    return custom_gcode_per_print_z_vector[bed];
 }
 ModelObject* Model::add_object()
 {

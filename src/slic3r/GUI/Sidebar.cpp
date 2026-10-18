@@ -926,6 +926,7 @@ Sidebar::Sidebar(Plater *parent)
     init_btn(&m_btn_connect_gcode, _L("Send to Connect"), scaled_height);
     m_btn_send_gcode->SetToolTip(_L("Send to print") + " " + GUI::shortkey_ctrl_prefix() + "Shift+G");
     m_btn_generate_supports->SetToolTip(_L("Generate supports for the loaded models so you can inspect and move them without slicing the whole print."));
+    m_btn_generate_supports->Hide();
 
     enable_buttons(false);
 
@@ -1268,13 +1269,28 @@ private:
 class ProcessTabBar : public wxPanel
 {
 public:
-    ProcessTabBar(wxWindow* parent, std::vector<wxString> labels, std::function<void(int)> on_select)
+    // scale 1 keeps the compact settings tabs. Models/Settings uses a larger scale.
+    ProcessTabBar(wxWindow* parent, std::vector<wxString> labels, std::function<void(int)> on_select, double scale = 1.0)
         : wxPanel(parent)
         , m_labels(std::move(labels))
         , m_on_select(std::move(on_select))
+        , m_scale(scale < 1.0 ? 1.0 : scale)
     {
         SetBackgroundColour(wxGetApp().get_window_default_clr());
-        SetFont(wxGetApp().small_font());
+        if (m_scale > 1.05) {
+            wxFont font = wxGetApp().bold_font();
+            const int base = std::max(1, wxGetApp().small_font().GetPointSize());
+            font.SetPointSize(std::max(base + 1, int(base * m_scale + 0.5)));
+            SetFont(font);
+        } else {
+            SetFont(wxGetApp().small_font());
+        }
+        m_pad_x = std::max(4, int(10 * m_scale + 0.5));
+        m_pad_y = std::max(2, int(6 * m_scale + 0.5));
+        m_extra = std::max(2, int(3 * m_scale + 0.5));
+        m_pen = std::max(2, int(2 * m_scale + 0.5));
+        m_inset = std::max(4, int(8 * m_scale + 0.5));
+        m_radius = std::max(3, int(4 * m_scale + 0.5));
         Bind(wxEVT_PAINT, &ProcessTabBar::on_paint, this);
         Bind(wxEVT_LEFT_UP, &ProcessTabBar::on_click, this);
         Bind(wxEVT_MOTION, &ProcessTabBar::on_motion, this);
@@ -1317,16 +1333,14 @@ private:
                 ? parent->GetClientSize().GetWidth()
                 : 28 * std::max(1, wxGetApp().em_unit());
         }
-        const int pad_x = 10;
-        const int pad_y = 6;
         m_cells.assign(m_labels.size(), {});
         int x = 0;
         int y = 0;
         int row_h = 0;
         for (size_t i = 0; i < m_labels.size(); ++i) {
             const wxSize text = dc.GetTextExtent(m_labels[i]);
-            const int w = text.x + pad_x * 2;
-            const int h = text.y + pad_y * 2 + 3;
+            const int w = text.x + m_pad_x * 2;
+            const int h = text.y + m_pad_y * 2 + m_extra;
             if (x > 0 && x + w > width) {
                 x = 0;
                 y += row_h;
@@ -1336,7 +1350,7 @@ private:
             x += w;
             row_h = std::max(row_h, h);
         }
-        const int total = std::max(1, y + row_h);
+        const int total = std::max(1, y + row_h + 3);
         if (GetMinSize().y != total)
             SetMinSize(wxSize(-1, total));
     }
@@ -1359,18 +1373,25 @@ private:
             const bool active = int(i) == m_active;
             const bool hover = int(i) == m_hover;
             if (active || hover) {
-                dc.SetBrush(active ? wxColour(47, 47, 56) : wxColour(60, 60, 68));
-                dc.SetPen(*wxTRANSPARENT_PEN);
-                dc.DrawRectangle(rect);
+                const wxColour fill = active ? wxColour(47, 47, 56) : wxColour(60, 60, 68);
+                dc.SetBrush(fill);
+                dc.SetPen(wxPen(fill, 1));
+                dc.DrawRoundedRectangle(rect, m_radius);
             }
             dc.SetTextForeground(active ? *wxWHITE : plain);
             const wxSize text = dc.GetTextExtent(m_labels[i]);
-            dc.DrawText(m_labels[i], rect.x + (rect.width - text.x) / 2, rect.y + 6);
+            const int text_y = m_scale > 1.05
+                ? rect.y + (rect.height - text.y) / 2 - 1
+                : rect.y + m_pad_y;
+            dc.DrawText(m_labels[i], rect.x + (rect.width - text.x) / 2, text_y);
             if (active) {
-                dc.SetPen(wxPen(accent, 2));
-                dc.DrawLine(rect.x + 8, rect.GetBottom() - 1, rect.GetRight() - 8, rect.GetBottom() - 1);
+                dc.SetPen(wxPen(accent, m_pen));
+                const int y_line = rect.GetBottom() - (m_pen > 2 ? 2 : 1);
+                dc.DrawLine(rect.x + m_inset, y_line, rect.GetRight() - m_inset, y_line);
             }
         }
+        dc.SetPen(wxPen(wxColour(90, 90, 104), 1));
+        dc.DrawLine(0, size.y - 1, size.x, size.y - 1);
     }
 
     void on_click(wxMouseEvent& event)
@@ -1403,6 +1424,13 @@ private:
     std::vector<wxString> m_labels;
     std::vector<Cell> m_cells;
     std::function<void(int)> m_on_select;
+    double m_scale{ 1.0 };
+    int m_pad_x{ 10 };
+    int m_pad_y{ 6 };
+    int m_extra{ 3 };
+    int m_pen{ 2 };
+    int m_inset{ 8 };
+    int m_radius{ 4 };
     int m_active{ 0 };
     int m_hover{ -1 };
 };
@@ -1422,7 +1450,7 @@ void Sidebar::install_pane_bar()
 
     m_pane_tabs = new ProcessTabBar(this, {
         _L("Models"), _L("Settings")
-    }, [this](int index) { show_models_pane(index == 0); });
+    }, [this](int index) { show_models_pane(index == 0); }, 1.4);
 
     GetSizer()->Insert(0, m_pane_tabs, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, int(0.4 * wxGetApp().em_unit()));
     m_pane_tabs->set_active(m_show_models ? 0 : 1);
@@ -2733,7 +2761,7 @@ void Sidebar::on_select_preset(wxCommandEvent& evt)
         this->switch_from_autoslicing_mode();
         wxQueueEvent(this->m_plater, new SimpleEvent(EVT_REGENERATE_BED_THUMBNAILS));
         this->m_plater->update();
-        s_print_statuses.fill(PrintStatus::idle);
+        std::fill(s_print_statuses.begin(), s_print_statuses.end(), PrintStatus::idle);
         this->m_plater->canvas3D()->check_volumes_outside_state(false);
     }
 
@@ -3283,6 +3311,12 @@ void Sidebar::enable_buttons(bool enable)
 {
     m_btn_generate_supports->Enable(enable);
     m_btn_reslice->Enable(enable);
+    if (!enable)
+        enable_export_buttons(false);
+}
+
+void Sidebar::enable_export_buttons(bool enable)
+{
     m_btn_export_gcode->Enable(enable);
     m_btn_send_gcode->Enable(enable);
     m_btn_export_gcode_removable->Enable(enable);
@@ -3306,6 +3340,9 @@ bool Sidebar::show_generate_supports(bool show) const {
     if (this->m_autoslicing_mode) {
         return false;
     }
+    // FDM supports are toolpaths. Generating them does not leave a support mesh the model can be moved against.
+    if (show && m_plater && m_plater->printer_technology() != ptSLA)
+        show = false;
     return m_btn_generate_supports->Show(show);
 }
 bool Sidebar::show_export(bool show) const {

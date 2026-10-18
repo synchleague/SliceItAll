@@ -7,6 +7,7 @@
 #include "libslic3r/BoundingBox.hpp"
 
 #include <map>
+#include <vector>
 
 namespace Slic3r {
 
@@ -27,7 +28,7 @@ GridCoords index2grid_coords(Index index);
 }
 
 inline std::vector<unsigned> s_bed_selector_thumbnail_texture_ids;
-inline std::array<bool, MAX_NUMBER_OF_BEDS> s_bed_selector_thumbnail_changed;
+inline std::vector<char> s_bed_selector_thumbnail_changed(MAX_NUMBER_OF_BEDS, 0);
 inline bool bed_selector_updated{false};
 
 enum class PrintStatus {
@@ -42,14 +43,15 @@ enum class PrintStatus {
 
 bool is_sliceable(const PrintStatus status);
 
-inline std::array<PrintStatus, MAX_NUMBER_OF_BEDS> s_print_statuses;
+inline std::vector<PrintStatus> s_print_statuses(MAX_NUMBER_OF_BEDS, PrintStatus::idle);
 
 class MultipleBeds {
 public:
 	MultipleBeds() = default;
 
-	static constexpr int get_max_beds() { return MAX_NUMBER_OF_BEDS; };
 	Vec3d get_bed_translation(int id) const;
+	// Grows per-bed storage. Plates are not capped.
+	void   ensure_beds(int count);
 
 	void   clear_inst_map();
 	void   set_instance_bed(ObjectID id, bool printable, int bed_idx);
@@ -109,16 +111,18 @@ public:
 
 private:
 	bool   is_instance_on_bed(const ObjectID id, const int bed_index) const;
+	// Widens the plate search until objects past the current window have a plate.
+	int    discover_highest_bed(Model& model, const BuildVolume& build_volume);
 
 	int m_number_of_beds = 1;
 	int m_minimum_beds   = 1;
-	std::array<bool, MAX_NUMBER_OF_BEDS> m_bed_locked{};
+	std::vector<char> m_bed_locked = std::vector<char>(MAX_NUMBER_OF_BEDS, 0);
 	int m_active_bed     = 0;
 	int m_bed_for_thumbnails_generation = -1;
 	bool m_show_next_bed = false;
 	std::map<ObjectID, int> m_inst_to_bed;
 	std::map<PrintBase*, size_t> m_printbase_to_texture;
-	std::array<int, MAX_NUMBER_OF_BEDS> m_occupied_beds_cache;
+	std::vector<int> m_occupied_beds_cache = std::vector<int>(MAX_NUMBER_OF_BEDS, 0);
 	int m_last_hovered_bed = -1;
 	BoundingBoxf m_build_volume_bb;
 	bool m_legacy_layout = false;

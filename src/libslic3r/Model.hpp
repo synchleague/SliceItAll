@@ -1277,6 +1277,7 @@ public:
     // Virtual extruder definitions. Empty when no virtual extruders are defined.
     FullSpectrum::VirtualExtruders virtual_extruders;
 
+    void ensure_beds(int count);
     ModelWipeTower& wipe_tower();
     const ModelWipeTower& wipe_tower() const;
     const ModelWipeTower& wipe_tower(const int bed_index) const;

@@ -113,6 +113,19 @@ public:
 private:
     void poll_jobs();
     void rebuild_lists();
+    // One solid loading frame while a visible rebuild runs, then the finished dashboard.
+    void begin_visible_rebuild();
+    void end_visible_rebuild();
+    void sync_recent_projects();
+    void paint_device_status(const std::string& id);
+    class RebuildCover {
+    public:
+        explicit RebuildCover(DevicesPanel* panel) : m_panel(panel) { if (m_panel) m_panel->begin_visible_rebuild(); }
+        ~RebuildCover() { if (m_panel) m_panel->end_visible_rebuild(); }
+        RebuildCover(const RebuildCover&) = delete;
+    private:
+        DevicesPanel* m_panel;
+    };
     void refresh_selected();
     void refresh_device(const std::string& id);
     void show_selected_device();
@@ -145,6 +158,9 @@ private:
     bool               m_dashboard_edit { false };
     bool               m_rebuilding_dashboard { false };
     bool               m_scaling_dashboard { false };
+    int                m_rebuild_depth { 0 };
+    bool               m_rebuild_covered { false };
+    wxPanel*           m_loading { nullptr };
     // Row index and the panel that draws it. Used to grow and shrink rows with the window.
     std::vector<std::pair<int, wxWindow*>> m_dash_rows;
     int                m_checks_in_flight { 0 };

@@ -121,6 +121,11 @@ AppUpdateAvailableDialog::AppUpdateAvailableDialog(const Semver& ver_current, co
         content_sizer->Add(new wxStaticText(this, wxID_ANY, _L("Clicking \'Next\' will open the GitHub release page.")));
         content_sizer->AddSpacer(VERT_SPACING);
     }
+    else
+    {
+        content_sizer->Add(new wxStaticText(this, wxID_ANY, _L("The installer will download and start. Windows will ask for permission to install it.")));
+        content_sizer->AddSpacer(VERT_SPACING);
+    }
 
 	AUAD_size = content_sizer->GetSize();
 	
@@ -128,7 +133,7 @@ AppUpdateAvailableDialog::AppUpdateAvailableDialog(const Semver& ver_current, co
 	add_button(wxID_CANCEL);
 
 	if (auto* btn_ok = get_button(wxID_OK); btn_ok != NULL) {
-		btn_ok->SetLabel(_L("Next"));
+		btn_ok->SetLabel(browser_on_next ? _L("Next") : _L("Download and install"));
 	}
 
 	finalize();

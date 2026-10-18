@@ -18,6 +18,7 @@
 ///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
 ///|/
 #include "Plater.hpp"
+#include "Autosave.hpp"
 #include "slic3r/GUI/BitmapCache.hpp"
 #include "slic3r/GUI/Jobs/UIThreadWorker.hpp"
 #include "slic3r/Utils/PrusaConnect.hpp"
@@ -745,7 +746,8 @@ struct Plater::priv
     void on_3dcanvas_mouse_dragging_finished(SimpleEvent&);
 
     void show_action_buttons(const bool is_ready_to_slice) const;
-    void show_autoslicing_action_buttons() const;
+    void show_autoslicing_action_buttons();
+    void ensure_prints(int beds);
     bool can_show_upload_to_connect() const;
     // Set the bed shape to a single closed 2D polygon(array of two element arrays),
     // triangulate the bed and store the triangles into m_bed.m_triangles,
@@ -864,6 +866,27 @@ void Plater::priv::fetch_workflows_file_online_start()
     );
 }
 
+void Plater::priv::ensure_prints(int beds)
+{
+    if (beds < 1)
+        beds = 1;
+    s_multiple_beds.ensure_beds(beds);
+    model.ensure_beds(beds);
+    const auto statuscb = [this](const Slic3r::PrintBase::SlicingStatus &status) {
+        wxQueueEvent(this->q, new Slic3r::SlicingStatusEvent(EVT_SLICING_UPDATE, 0, status));
+    };
+    while ((int)fff_prints.size() < beds) {
+        fff_prints.emplace_back(std::make_unique<Print>());
+        fff_prints.back()->set_status_callback(statuscb);
+    }
+    while ((int)sla_prints.size() < beds) {
+        sla_prints.emplace_back(std::make_unique<SLAPrint>());
+        sla_prints.back()->set_status_callback(statuscb);
+    }
+    if ((int)gcode_results.size() < beds)
+        gcode_results.resize(size_t(beds));
+}
+
 void Plater::priv::init()
 {
     workflow_manager = std::make_unique<sla::WorkflowManager>();
@@ -875,7 +898,7 @@ void Plater::priv::init()
     q->fetch_workflows_file_online_start();
     
 
-    for (int i = 0; i < s_multiple_beds.get_max_beds(); ++i) {
+    for (int i = 0; i < int(MAX_NUMBER_OF_BEDS); ++i) {
         gcode_results.emplace_back();
         fff_prints.emplace_back(std::make_unique<Print>());
         sla_prints.emplace_back(std::make_unique<SLAPrint>());
@@ -955,7 +978,12 @@ void Plater::priv::init()
         view3D_canvas->Bind(EVT_GLCANVAS_RESET_SKEW, [this](SimpleEvent&) { update(); });
         view3D_canvas->Bind(EVT_GLCANVAS_INSTANCE_SCALED, [this](SimpleEvent&) { update(); });
         view3D_canvas->Bind(EVT_GLCANVAS_INSTANCE_MIRRORED, [this](SimpleEvent&) { update(); });
-        view3D_canvas->Bind(EVT_GLCANVAS_ENABLE_ACTION_BUTTONS, [this](Event<bool>& evt) { this->sidebar->enable_buttons(evt.data); });
+        view3D_canvas->Bind(EVT_GLCANVAS_ENABLE_ACTION_BUTTONS, [this](Event<bool>& evt) {
+            const bool sliceable = evt.data;
+            const bool busy = this->background_process.running() || this->background_process.is_export_scheduled();
+            this->sidebar->enable_buttons(sliceable && !busy);
+            this->sidebar->enable_export_buttons(sliceable && !busy && this->background_process.finished());
+        });
         view3D_canvas->Bind(EVT_GLCANVAS_UPDATE_GEOMETRY, &priv::on_update_geometry, this);
         view3D_canvas->Bind(EVT_GLCANVAS_MOUSE_DRAGGING_STARTED, &priv::on_3dcanvas_mouse_dragging_started, this);
         view3D_canvas->Bind(EVT_GLCANVAS_MOUSE_DRAGGING_FINISHED, &priv::on_3dcanvas_mouse_dragging_finished, this);
@@ -1372,6 +1400,7 @@ void Plater::priv::update(unsigned int flags)
         // pulls the correct data.
         update_status = this->update_background_process(false, flags & (unsigned int)UpdateParams::POSTPONE_VALIDATION_ERROR_MESSAGE);
     s_multiple_beds.update_shown_beds(model, q->build_volume(), true);
+    ensure_prints(s_multiple_beds.get_number_of_beds());
     this->view3D->reload_scene(false, flags & (unsigned int)UpdateParams::FORCE_FULL_SCREEN_REFRESH);
     this->preview->reload_print();
     if (force_background_processing_restart)
@@ -1956,6 +1985,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
         s_multiple_beds.rearrange_after_load(model, q->build_volume());
     }
     q->canvas3D()->check_volumes_outside_state();
+    ensure_prints(s_multiple_beds.get_number_of_beds());
     s_multiple_beds.ensure_wipe_towers_on_beds(model, fff_prints);
     s_multiple_beds.update_shown_beds(model, q->build_volume());
 
@@ -2260,11 +2290,11 @@ void Plater::priv::object_list_changed()
         }
     }
 
-    sidebar->enable_buttons(
-        s_multiple_beds.is_bed_occupied(s_multiple_beds.get_active_bed())
-        && !export_in_progress
-        && is_sliceable(s_print_statuses[s_multiple_beds.get_active_bed()])
-    );
+    const bool sliceable = s_multiple_beds.is_bed_occupied(s_multiple_beds.get_active_bed())
+        && is_sliceable(s_print_statuses[s_multiple_beds.get_active_bed()]);
+    const bool busy = export_in_progress || this->background_process.running();
+    sidebar->enable_buttons(sliceable && !busy);
+    sidebar->enable_export_buttons(sliceable && !busy && this->background_process.finished());
 }
 
 void Plater::priv::select_all()
@@ -2621,7 +2651,7 @@ std::vector<Print::ApplyStatus> apply_to_inactive_beds(
     std::vector<std::unique_ptr<Print>> &prints,
     const DynamicPrintConfig &config
 ) {
-    std::vector<Print::ApplyStatus> result(MAX_NUMBER_OF_BEDS);
+    std::vector<Print::ApplyStatus> result(prints.size());
     for (std::size_t bed_index{0}; bed_index < prints.size(); ++bed_index) {
         const std::unique_ptr<Print> &print{prints[bed_index]};
         if (!print || bed_index == s_multiple_beds.get_active_bed()) {
@@ -2637,9 +2667,9 @@ std::vector<Print::ApplyStatus> apply_to_inactive_beds(
 
 void Plater::priv::regenerate_thumbnails(SimpleEvent&) {
     const int num{s_multiple_beds.get_number_of_beds()};
-    if (num <= 1 || num > MAX_NUMBER_OF_BEDS) {
+    if (num <= 1)
         return;
-    }
+    s_multiple_beds.ensure_beds(num);
 
     ThumbnailData data;
     ThumbnailsParams params;
@@ -2655,7 +2685,7 @@ void Plater::priv::regenerate_thumbnails(SimpleEvent&) {
     glsafe(glGetIntegerv(GL_UNPACK_ALIGNMENT, &curr_unpack_alignment));
     glsafe(glPixelStorei(GL_UNPACK_ALIGNMENT, 1));
     glsafe(glDeleteTextures(s_bed_selector_thumbnail_texture_ids.size(), s_bed_selector_thumbnail_texture_ids.data()));
-    s_bed_selector_thumbnail_changed.fill(false);
+    std::fill(s_bed_selector_thumbnail_changed.begin(), s_bed_selector_thumbnail_changed.end(), 0);
 
     s_bed_selector_thumbnail_texture_ids.resize(num);
     glsafe(glGenTextures(num, s_bed_selector_thumbnail_texture_ids.data()));
@@ -2901,16 +2931,15 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
         sidebar->set_btn_label(ActionButtonType::SendGCode, _(label_btn_send));
         dirty_state.update_from_preview();
 
-        const wxString slice_string = background_process.running() && wxGetApp().get_mode() == comSimple ?
-                                      _L("Slicing") + dots : _L("Slice now");
+        const wxString slice_string = background_process.running() ? _L("Slicing") + dots : _L("Slice now");
         sidebar->set_btn_label(ActionButtonType::Reslice, slice_string);
-        if (background_process.finished())
+        // Send and Export stay hidden while a slice is still running, even if an
+        // earlier plate was already finished. SLA calls this several times mid-calculation.
+        if (background_process.running())
+            show_action_buttons(true);
+        else if (background_process.finished())
             show_action_buttons(false);
-        else if (!background_process.empty() &&
-                 !background_process.running()) /* Do not update buttons if background process is running
-                                                 * This condition is important for SLA mode especially,
-                                                 * when this function is called several times during calculations
-                                                 * */
+        else if (!background_process.empty())
             show_action_buttons(true);
     }
 
@@ -3859,10 +3888,15 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         if (wxGetApp().get_mode() == comSimple)
             sidebar->set_btn_label(ActionButtonType::Reslice, "Slice now");
         show_action_buttons(true);
+    } else if (evt.success() && !has_error) {
+        sidebar->set_btn_label(ActionButtonType::Reslice, _L("Slice now"));
+        show_action_buttons(false);
+        sidebar->enable_export_buttons(true);
     } else {
-        if(wxGetApp().get_mode() == comSimple) {
-            show_action_buttons(false);
-        }
+        sidebar->set_btn_label(ActionButtonType::Reslice, _L("Slice now"));
+        show_action_buttons(true);
+    }
+    if (!supports_only && !evt.cancelled()) {
         if (exporting_status != ExportingStatus::NOT_EXPORTING && !has_error) {
             notification_manager->stop_delayed_notifications_of_type(NotificationType::ExportOngoing);
             notification_manager->close_notification_of_type(NotificationType::ExportOngoing);
@@ -4442,6 +4476,33 @@ bool Plater::priv::can_show_upload_to_connect() const
     return vendor_id.find("Prusa") != std::string::npos;
 } 
 
+namespace {
+
+// The selected printer can take a job from this app. An offline printer, such as a
+// resin printer with no network address, cannot.
+bool printer_can_receive_job()
+{
+    // The preset in use has no networked printer. Export stays available.
+    if (!offline_export_printer_name().empty())
+        return false;
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    if (!bundle)
+        return false;
+    PhysicalPrinterCollection& printers = bundle->physical_printers;
+    if (!printers.has_selection())
+        return false;
+    const DynamicPrintConfig* config = printers.get_selected_printer_config();
+    if (!config)
+        return false;
+    if (const auto* type = config->option<ConfigOptionEnum<PrintHostType>>("host_type")) {
+        if (type->value == htOffline)
+            return false;
+    }
+    return !config->opt_string("print_host").empty();
+}
+
+} // namespace
+
 void Plater::priv::show_action_buttons(const bool ready_to_slice_) const
 {
 	// Cache this value, so that the callbacks from the RemovableDriveManager may repeat that value when calling show_action_buttons().
@@ -4452,6 +4513,7 @@ void Plater::priv::show_action_buttons(const bool ready_to_slice_) const
     DynamicPrintConfig* selected_printer_config = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config();
     const auto print_host_opt = selected_printer_config ? selected_printer_config->option<ConfigOptionString>("print_host") : nullptr;
     const bool connect_gcode_shown = print_host_opt == nullptr && can_show_upload_to_connect();
+    const bool send_shown = printer_can_receive_job();
     // when a background processing is ON, export_btn and/or send_btn are showing
     if (get_config_bool("background_processing"))
     {
@@ -4459,7 +4521,7 @@ void Plater::priv::show_action_buttons(const bool ready_to_slice_) const
 		if (sidebar->show_reslice(false) |
             sidebar->show_generate_supports(false) |
 			sidebar->show_export(true) |
-			sidebar->show_send(true) |
+			sidebar->show_send(send_shown) |
             sidebar->show_connect(connect_gcode_shown) |
 			sidebar->show_export_removable(removable_media_status.has_removable_drives))
             sidebar->Layout();
@@ -4472,17 +4534,18 @@ void Plater::priv::show_action_buttons(const bool ready_to_slice_) const
         if (sidebar->show_reslice(ready_to_slice) |
             sidebar->show_generate_supports(ready_to_slice) |
             sidebar->show_export(!ready_to_slice) |
-            sidebar->show_send(!ready_to_slice) |
+            sidebar->show_send(!ready_to_slice && send_shown) |
             sidebar->show_connect(connect_gcode_shown && !ready_to_slice) |
 			sidebar->show_export_removable(!ready_to_slice && removable_media_status.has_removable_drives))
             sidebar->Layout();
     }
 }
 
-void Plater::priv::show_autoslicing_action_buttons() const {
+void Plater::priv::show_autoslicing_action_buttons() {
     if (!s_multiple_beds.is_autoslicing()) {
         return;
     }
+    ensure_prints(s_multiple_beds.get_number_of_beds());
 
     DynamicPrintConfig* selected_printer_config = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config();
     const auto print_host_opt = selected_printer_config ? selected_printer_config->option<ConfigOptionString>("print_host") : nullptr;
@@ -4715,6 +4778,7 @@ void Plater::priv::update_after_undo_redo(const UndoRedo::Snapshot& snapshot, bo
     this->view3D->get_canvas3d()->get_gizmos_manager().update_after_undo_redo(snapshot);
 
     s_multiple_beds.update_shown_beds(model, q->build_volume(), false);
+    ensure_prints(s_multiple_beds.get_number_of_beds());
     wxGetApp().obj_list()->update_after_undo_redo();
 
     if (wxGetApp().get_mode() == comSimple && model_has_advanced_features(this->model)) {
@@ -4863,6 +4927,26 @@ void Plater::swap_in_model(const Model& source, const wxString& project_filename
     clear_undo_redo_stack_main();
     if (GLCanvas3D* canvas = canvas3D())
         canvas->reload_scene(true);
+}
+
+bool Plater::restore_autosaved_project(const wxString& autosave_path, const wxString& original_path)
+{
+    if (autosave_path.empty())
+        return false;
+    load_project(autosave_path);
+    if (get_project_filename(".3mf").empty())
+        return false;
+    if (wxGetApp().mainframe)
+        wxGetApp().mainframe->remove_from_recent_projects(autosave_path);
+    if (original_path.empty())
+        p->set_project_filename(wxString());
+    else
+        set_project_filename(original_path);
+    p->undo_redo_stack_main().mark_current_as_unsaved();
+    p->dirty_state.update_from_undo_redo_stack(true);
+    if (wxGetApp().mainframe)
+        wxGetApp().mainframe->update_title();
+    return true;
 }
 
 void Plater::load_project(const wxString& filename)
@@ -6271,6 +6355,7 @@ void Plater::apply_cut_object_to_model(size_t obj_idx, const ModelObjectPtrs& ne
     }
 
     s_multiple_beds.inst_map_updated();
+    p->ensure_prints(s_multiple_beds.get_number_of_beds());
     s_multiple_beds.set_active_bed(bed_index);
 
     UIThreadWorker w;
@@ -6414,6 +6499,9 @@ std::optional<fs::path> Plater::get_multiple_output_dir(const std::string &start
 void Plater::export_gcode(bool prefer_removable)
 {
     if (p->model.objects.empty())
+        return;
+
+    if (p->background_process.running() || !p->background_process.finished())
         return;
 
     if (canvas3D()->get_gizmos_manager().is_in_editing_mode(true))
@@ -6942,6 +7030,7 @@ bool Plater::export_3mf(const boost::filesystem::path& output_path)
         // Success
         BOOST_LOG_TRIVIAL(info) << "3MF file exported to " << path;
         p->set_project_filename(path);
+        Autosave::instance().forget();
     }
     else {
         // Failure
@@ -7026,13 +7115,11 @@ void Plater::reslice()
     bool clean_gcode_toolpaths = true;
     if (p->background_process.running())
     {
-        if (wxGetApp().get_mode() == comSimple)
-            p->sidebar->set_btn_label(ActionButtonType::Reslice, _L("Slicing") + dots);
-        else
-        {
-            p->sidebar->set_btn_label(ActionButtonType::Reslice, _L("Slice now"));
-            p->show_action_buttons(false);
-        }
+        // Keep Slice now in place until the plate is actually finished.
+        // Showing Send or Export here lets a click land while the slicer is still running.
+        p->sidebar->set_btn_label(ActionButtonType::Reslice, _L("Slicing") + dots);
+        p->show_action_buttons(true);
+        p->sidebar->enable_buttons(false);
     }
     else if (!p->background_process.empty() && !p->background_process.idle())
         p->show_action_buttons(true);
@@ -7338,36 +7425,11 @@ void Plater::send_gcode()
 {
     if (!wxGetApp().preset_bundle || p->model.objects.empty())
         return;
+    if (p->background_process.running() || !p->background_process.finished())
+        return;
+    if (!can_send_to_selected_printer())
+        return;
     PhysicalPrinterCollection& printers = wxGetApp().preset_bundle->physical_printers;
-    const bool selected_has_host = printers.has_selection()
-        && !printers.get_selected_printer().config.opt_string("print_host").empty();
-    if (!selected_has_host) {
-        const std::string preset_name = wxGetApp().preset_bundle->printers.get_selected_preset_name();
-        const PhysicalPrinter* match = nullptr;
-        const PhysicalPrinter* any_host = nullptr;
-        for (const PhysicalPrinter& printer : printers()) {
-            if (printer.config.opt_string("print_host").empty())
-                continue;
-            if (!any_host)
-                any_host = &printer;
-            if (printer.preset_names.count(preset_name)) {
-                match = &printer;
-                break;
-            }
-        }
-        const PhysicalPrinter* chosen = match ? match : any_host;
-        if (!chosen) {
-            wxMessageDialog(this,
-                _L("Add this printer as a network device in the configuration wizard before sending a print."),
-                _L("Send to print"),
-                wxOK | wxICON_INFORMATION).ShowModal();
-            return;
-        }
-        const std::string preset = chosen->preset_names.count(preset_name)
-            ? preset_name
-            : (chosen->preset_names.empty() ? std::string() : *chosen->preset_names.begin());
-        printers.select_printer(chosen->name, preset);
-    }
     DynamicPrintConfig* physical_printer_config = printers.get_selected_printer_config();
     if (!physical_printer_config)
         return;
@@ -7929,6 +7991,22 @@ bool Plater::is_export_gcode_scheduled() const
     return p->background_process.is_export_scheduled();
 }
 
+bool Plater::is_slice_ready_for_export() const
+{
+    if (!p || p->model.objects.empty())
+        return false;
+    if (!is_sliceable(s_print_statuses[s_multiple_beds.get_active_bed()]))
+        return false;
+    if (p->background_process.running() || p->background_process.is_export_scheduled())
+        return false;
+    return p->background_process.finished();
+}
+
+bool Plater::can_send_to_selected_printer() const
+{
+    return is_slice_ready_for_export() && printer_can_receive_job();
+}
+
 const Selection &Plater::get_selection() const
 {
     return p->get_selection();
@@ -8041,6 +8119,7 @@ void Plater::arrange(Worker &w, const ArrangeSelectionMode &mode)
         }
 
         s_multiple_beds.update_shown_beds(model(), build_volume());
+        p->ensure_prints(s_multiple_beds.get_number_of_beds());
         canvas3D()->check_volumes_outside_state();
 
         update(static_cast<unsigned int>(UpdateParams::FORCE_FULL_SCREEN_REFRESH));
@@ -8077,7 +8156,7 @@ bool Plater::set_printer_technology(PrinterTechnology printer_technology)
     p->printer_technology = printer_technology;
     bool ret = p->background_process.select_technology(printer_technology);
     if (ret) {
-        s_print_statuses.fill(PrintStatus::idle);
+        std::fill(s_print_statuses.begin(), s_print_statuses.end(), PrintStatus::idle);
         // Update the active presets.
     }
     //FIXME for SLA synchronize
@@ -8543,6 +8622,7 @@ void Plater::bring_instance_forward()
 
 std::vector<std::unique_ptr<Print>>& Plater::get_fff_prints()
 {
+    p->ensure_prints(s_multiple_beds.get_number_of_beds());
     return p->fff_prints;
 }
 
@@ -8567,7 +8647,11 @@ wxMenu* Plater::layer_menu()            { return p->menus.layer_menu();         
 wxMenu* Plater::multi_selection_menu()  { return p->menus.multi_selection_menu();   }
 
 
-Print& Plater::active_fff_print() { return *p->fff_prints[s_multiple_beds.get_active_bed()]; }
+Print& Plater::active_fff_print()
+{
+    p->ensure_prints(std::max(1, s_multiple_beds.get_number_of_beds()));
+    return *p->fff_prints[s_multiple_beds.get_active_bed()];
+}
 //SLAPrint& Plater::active_sla_print()  { return *p->sla_prints[s_multiple_beds.get_active_bed()]; }
 
 // For now, only use the first SLAPrint for all the beds - it means reslicing

@@ -1377,7 +1377,10 @@ bool GLCanvas3D::is_arrange_alignment_enabled() const
     if (!is_XL_printer(*m_config)) {
         return false;
     }
-    if (this->m_wipe_tower_bounding_boxes[s_multiple_beds.get_active_bed()]) {
+    const int active_bed = s_multiple_beds.get_active_bed();
+    if (active_bed >= 0
+        && active_bed < (int)this->m_wipe_tower_bounding_boxes.size()
+        && this->m_wipe_tower_bounding_boxes[active_bed]) {
         return false;
     }
     return true;
@@ -2930,7 +2933,11 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
         const float ca = dynamic_cast<const ConfigOptionFloat*>(m_config->option("wipe_tower_cone_angle"))->value;
 
         if (extruders_count > 1 && wt && !co && !m_assembly_view) {
-            for (size_t bed_idx = 0; bed_idx < s_multiple_beds.get_max_beds(); ++bed_idx) {
+            const int bed_count = s_multiple_beds.get_number_of_beds();
+            if ((int)m_wipe_tower_bounding_boxes.size() < bed_count)
+                m_wipe_tower_bounding_boxes.resize(size_t(bed_count));
+            m_model->ensure_beds(bed_count);
+            for (size_t bed_idx = 0; bed_idx < size_t(bed_count); ++bed_idx) {
                 const Print *print = wxGetApp().plater()->get_fff_prints()[bed_idx].get();
 
                 const float x = m_model->get_wipe_tower_vector()[bed_idx].position.x();
@@ -2973,10 +2980,10 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
             }
             s_multiple_beds.ensure_wipe_towers_on_beds(wxGetApp().plater()->model(), wxGetApp().plater()->get_fff_prints());
         } else {
-            m_wipe_tower_bounding_boxes.fill(std::nullopt);
+            std::fill(m_wipe_tower_bounding_boxes.begin(), m_wipe_tower_bounding_boxes.end(), std::nullopt);
         }
     } else {
-        m_wipe_tower_bounding_boxes.fill(std::nullopt);
+        std::fill(m_wipe_tower_bounding_boxes.begin(), m_wipe_tower_bounding_boxes.end(), std::nullopt);
     }
 
     update_volumes_colors_by_extruder();
@@ -4605,7 +4612,8 @@ void GLCanvas3D::do_move(const std::string& snapshot_type)
 
     std::set<std::pair<int, int>> done;  // keeps track of modified instances
     bool object_moved = false;
-    std::vector<Vec3d> wipe_tower_origin = std::vector<Vec3d>(s_multiple_beds.get_max_beds(), Vec3d::Zero());
+    const size_t bed_count = size_t(std::max(1, s_multiple_beds.get_number_of_beds()));
+    std::vector<Vec3d> wipe_tower_origin(bed_count, Vec3d::Zero());
 
     Selection::EMode selection_mode = m_selection.get_mode();
     int vol_id = -1;
@@ -4638,7 +4646,7 @@ void GLCanvas3D::do_move(const std::string& snapshot_type)
         }
         else if (m_selection.is_wipe_tower() && v->is_wipe_tower() && m_selection.contains_volume(vol_id)) {
             // Move a wipe tower proxy.
-            for (size_t bed_idx = 0; bed_idx < s_multiple_beds.get_max_beds(); ++bed_idx) {
+            for (size_t bed_idx = 0; bed_idx < wipe_tower_origin.size(); ++bed_idx) {
                 if (v->geometry_id.second == wipe_tower_instance_id(bed_idx).id) {
                     wipe_tower_origin[bed_idx] = v->get_volume_offset();
                     break;
@@ -4673,6 +4681,7 @@ void GLCanvas3D::do_move(const std::string& snapshot_type)
 
     if (auto it = std::find_if(wipe_tower_origin.begin(), wipe_tower_origin.end(), [](const Vec3d& pos) { return pos != Vec3d::Zero(); }); it != wipe_tower_origin.end()) {
         size_t bed_idx = it - wipe_tower_origin.begin();
+        m_model->ensure_beds(int(bed_idx) + 1);
         m_model->get_wipe_tower_vector()[bed_idx].position = Vec2d((*it)[0] - s_multiple_beds.get_bed_translation(bed_idx).x(), (*it)[1] - s_multiple_beds.get_bed_translation(bed_idx).y());
         post_event(SimpleEvent(EVT_GLCANVAS_WIPETOWER_TOUCHED));
     }
@@ -4724,7 +4733,8 @@ void GLCanvas3D::do_rotate(const std::string& snapshot_type)
         ++v_id;
         if (v->is_wipe_tower()) {
             if (m_selection.contains_volume(v_id)) {
-                for (size_t bed_idx = 0; bed_idx < s_multiple_beds.get_max_beds(); ++bed_idx) {
+                m_model->ensure_beds(s_multiple_beds.get_number_of_beds());
+                for (size_t bed_idx = 0; bed_idx < size_t(s_multiple_beds.get_number_of_beds()); ++bed_idx) {
                     if (v->geometry_id.second == wipe_tower_instance_id(bed_idx).id) {
                         const Vec3d offset = v->get_volume_offset() - s_multiple_beds.get_bed_translation(bed_idx);
                         Vec3d rot_unit_x = v->get_volume_transformation().get_matrix().linear() * Vec3d::UnitX();
@@ -5059,7 +5069,7 @@ std::vector<GLCanvas3D::WipeTowerInfo> GLCanvas3D::get_wipe_tower_infos() const
 {
     std::vector<WipeTowerInfo> result;
 
-    for (size_t bed_idx = 0; bed_idx < s_multiple_beds.get_max_beds(); ++bed_idx) {
+    for (size_t bed_idx = 0; bed_idx < m_wipe_tower_bounding_boxes.size(); ++bed_idx) {
         if (m_wipe_tower_bounding_boxes[bed_idx]) {
             const ModelWipeTower &wipe_tower{m_model->wipe_tower(bed_idx)};
             WipeTowerInfo wti;
@@ -7959,7 +7969,7 @@ void Slic3r::GUI::GLCanvas3D::_render_bed_selector()
         return;
 
     bool extra_frame{ false };
-    static std::array<std::optional<PrintStatus>, MAX_NUMBER_OF_BEDS> previous_print_status;
+    static std::vector<std::optional<PrintStatus>> previous_print_status;
 
     if (wxGetApp().is_editor()) {
 #if ENABLE_RETINA_GL
@@ -7982,6 +7992,9 @@ void Slic3r::GUI::GLCanvas3D::_render_bed_selector()
             ImGui::PushStyleColor(ImGuiCol_Button, ImGuiPureWrap::COL_GREY_DARK);
             ImGui::PushStyleColor(ImGuiCol_Border, inactive ? ImGuiPureWrap::COL_GREY_DARK : ImGuiPureWrap::COL_BUTTON_ACTIVE);
 
+            s_multiple_beds.ensure_beds(i + 1);
+            if (i >= (int)previous_print_status.size())
+                previous_print_status.resize(size_t(i) + 1);
             const PrintStatus print_status{s_print_statuses[i]};
             // An empty plate cannot be sliced, but it still has to be selectable.
             const bool selectable = is_sliceable(print_status) || print_status == PrintStatus::empty;
@@ -8161,12 +8174,12 @@ void Slic3r::GUI::GLCanvas3D::_render_bed_selector()
                 ImGui::SameLine();
             }
 
-            if (s_multiple_beds.get_number_of_beds() < s_multiple_beds.get_max_beds()) {
-                if (ImGui::Button("+", btn_size + btn_padding) && s_multiple_beds.add_bed())
-                    select_bed(s_multiple_beds.get_number_of_beds() - 1, true);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("%s", _u8L("Add build plate").c_str());
+            if (ImGui::Button("+", btn_size + btn_padding) && s_multiple_beds.add_bed()) {
+                wxGetApp().plater()->get_fff_prints();
+                select_bed(s_multiple_beds.get_number_of_beds() - 1, true);
             }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", _u8L("Add build plate").c_str());
 
             ImGui::PopStyleVar(3);
             ImGui::End();

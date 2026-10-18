@@ -295,9 +295,11 @@ BuildVolume::ObjectState BuildVolume::object_state(const indexed_triangle_set& i
     // When loading an old project with more than the maximum number of beds,
     // we still want to move the objects to the respective positions.
     // Max beds number is momentarily increased when doing the rearrange, so use it.
+    // While loading, test the plates that exist. Otherwise also test one empty plate
+    // past the last, so an object can be dropped there and become a new plate.
     const int max_bed = s_multiple_beds.get_loading_project_flag()
-                        ? s_multiple_beds.get_number_of_beds() - 1
-                        : std::min(s_multiple_beds.get_number_of_beds(), s_multiple_beds.get_max_beds() - 1);
+                        ? std::max(0, s_multiple_beds.get_number_of_beds() - 1)
+                        : s_multiple_beds.get_number_of_beds();
 
     for (int bed_id = 0; bed_id <= max_bed; ++bed_id) {
 
@@ -365,7 +367,7 @@ BuildVolume::ObjectState BuildVolume::volume_state_bbox(const BoundingBoxf3 volu
 
     ObjectState state = ObjectState::Outside;
     int obj_bed_id = -1;
-    for (int bed_id = 0; bed_id <= std::min(s_multiple_beds.get_number_of_beds(), s_multiple_beds.get_max_beds() - 1); ++bed_id) {
+    for (int bed_id = 0; bed_id <= s_multiple_beds.get_number_of_beds(); ++bed_id) {
         BoundingBoxf3 volume_bbox = volume_bbox_orig;
         volume_bbox.translate(-s_multiple_beds.get_bed_translation(bed_id));
 

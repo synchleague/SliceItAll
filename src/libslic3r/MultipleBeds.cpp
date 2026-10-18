@@ -127,15 +127,32 @@ Vec3d MultipleBeds::get_bed_translation(int id) const
                  0.);
 }
 
+void MultipleBeds::ensure_beds(int count)
+{
+    if (count < 1)
+        return;
+    const size_t n = size_t(count);
+    if (m_bed_locked.size() < n)
+        m_bed_locked.resize(n, 0);
+    if (m_occupied_beds_cache.size() < n)
+        m_occupied_beds_cache.resize(n, 0);
+    if (s_print_statuses.size() < n)
+        s_print_statuses.resize(n, PrintStatus::idle);
+    if (s_bed_selector_thumbnail_changed.size() < n)
+        s_bed_selector_thumbnail_changed.resize(n, 0);
+}
+
 void MultipleBeds::clear_inst_map()
 {
     m_inst_to_bed.clear();
-    m_occupied_beds_cache.fill(false);
+    std::fill(m_occupied_beds_cache.begin(), m_occupied_beds_cache.end(), 0);
 }
 
 void MultipleBeds::set_instance_bed(ObjectID id, bool printable, int bed_idx)
 {
-    assert(bed_idx < get_max_beds());
+    if (bed_idx < 0)
+        return;
+    ensure_beds(bed_idx + 1);
     m_inst_to_bed[id] = bed_idx;
 
     if (printable)
@@ -150,12 +167,13 @@ void MultipleBeds::inst_map_updated()
 
     // Occupied plates stay. An empty plate added from the strip stays too,
     // because add_bed() raises m_minimum_beds and this used to overwrite it.
-    const int occupied = std::min(get_max_beds(), max_bed_idx + 1);
+    const int occupied = max_bed_idx + 1;
     if (occupied > m_minimum_beds)
         m_minimum_beds = occupied;
 
     const int previous = m_number_of_beds;
-    const int needed = std::min(get_max_beds(), std::max(m_minimum_beds, occupied));
+    const int needed = std::max(m_minimum_beds, occupied);
+    ensure_beds(needed);
     if (m_number_of_beds != needed) {
         m_number_of_beds = needed;
         if (needed > previous)
@@ -168,15 +186,14 @@ void MultipleBeds::inst_map_updated()
 
 void MultipleBeds::request_next_bed(bool show)
 {
-    m_show_next_bed = (get_number_of_beds() < get_max_beds() ? show : false);
+    m_show_next_bed = show;
 }
 
 bool MultipleBeds::add_bed()
 {
-    if (m_number_of_beds >= get_max_beds())
-        return false;
     m_minimum_beds = m_number_of_beds + 1;
     m_number_of_beds = m_minimum_beds;
+    ensure_beds(m_number_of_beds);
     request_next_bed(false);
     return true;
 }
@@ -186,7 +203,7 @@ void MultipleBeds::reset_to_first_bed()
     m_number_of_beds = 1;
     m_minimum_beds = 1;
     m_active_bed = 0;
-    m_bed_locked.fill(false);
+    std::fill(m_bed_locked.begin(), m_bed_locked.end(), 0);
     m_show_next_bed = false;
     clear_inst_map();
 }
@@ -212,20 +229,23 @@ bool MultipleBeds::remove_bed(int bed)
 
 bool MultipleBeds::is_bed_locked(int bed) const
 {
-    return bed >= 0 && bed < MAX_NUMBER_OF_BEDS && m_bed_locked[size_t(bed)];
+    return bed >= 0 && bed < int(m_bed_locked.size()) && m_bed_locked[size_t(bed)];
 }
 
 void MultipleBeds::set_bed_locked(int bed, bool locked)
 {
-    if (bed >= 0 && bed < MAX_NUMBER_OF_BEDS)
-        m_bed_locked[size_t(bed)] = locked;
+    if (bed < 0)
+        return;
+    ensure_beds(bed + 1);
+    m_bed_locked[size_t(bed)] = locked ? 1 : 0;
 }
 
 void MultipleBeds::set_active_bed(int i)
 {
-    assert(i < get_max_beds());
-    if (i<m_number_of_beds)
+    if (i >= 0 && i < m_number_of_beds) {
+        ensure_beds(m_number_of_beds);
         m_active_bed = i;
+    }
 }
 
 namespace MultipleBedsUtils {
@@ -375,10 +395,8 @@ void MultipleBeds::set_instances_outside_outside_bed_unprintable(Model& model, c
 
 void MultipleBeds::move_from_bed_to_first_bed(Model& model, const int bed_index) const
 {
-    if (bed_index < 0 || bed_index >= MAX_NUMBER_OF_BEDS) {
-        assert(false);
+    if (bed_index < 0)
         return;
-    }
     for (ModelObject* mo : model.objects) {
         for (ModelInstance* mi : mo->instances) {
             if (this->is_instance_on_bed(mi->id(), bed_index)) {
@@ -404,19 +422,44 @@ bool MultipleBeds::is_glvolume_on_thumbnail_bed(const Model& model, int obj_idx,
     return (m_bed_for_thumbnails_generation < 0 || it->second == m_bed_for_thumbnails_generation);
 }
 
+int MultipleBeds::discover_highest_bed(Model& model, const BuildVolume& build_volume)
+{
+    int probe = std::max(m_number_of_beds, 1);
+    int highest = 0;
+    for (int pass = 0; pass < 24; ++pass) {
+        // object_state also tests one plate past the current count.
+        m_number_of_beds = probe;
+        ensure_beds(probe + 1);
+        model.update_print_volume_state(build_volume);
+        highest = 0;
+        for (const auto& [oid, bed_id] : m_inst_to_bed)
+            highest = std::max(highest, bed_id);
+        // Keep going while the last plate in this window is in use. A gap before
+        // that plate means nothing sits further out.
+        if (highest + 1 < probe)
+            break;
+        if (probe >= (1 << 20))
+            break;
+        probe *= 2;
+    }
+    return highest;
+}
+
 void MultipleBeds::update_shown_beds(Model& model, const BuildVolume& build_volume, bool only_remove /*=false*/) {
     const int original_number_of_beds = m_number_of_beds;
     const int stash_active = get_active_bed();
     if (! only_remove)
-        m_number_of_beds = get_max_beds();
-    model.update_print_volume_state(build_volume);
+        discover_highest_bed(model, build_volume);
+    else
+        model.update_print_volume_state(build_volume);
     const int max_bed{std::accumulate(
         this->m_inst_to_bed.begin(), this->m_inst_to_bed.end(), 0,
         [](const int max_so_far, const std::pair<ObjectID, int> &value){
             return std::max(max_so_far, value.second);
         }
     )};
-    m_number_of_beds = std::min(this->get_max_beds(), std::max(m_minimum_beds, max_bed + 1));
+    m_number_of_beds = std::max(m_minimum_beds, max_bed + 1);
+    ensure_beds(m_number_of_beds);
     if (m_number_of_beds > m_minimum_beds)
         m_minimum_beds = m_number_of_beds;
     model.update_print_volume_state(build_volume);
@@ -431,12 +474,9 @@ bool MultipleBeds::rearrange_after_load(Model& model, const BuildVolume& build_v
     int stash_active = get_active_bed();
     Slic3r::ScopeGuard guard([&]() {
         m_legacy_layout = false;
-        m_number_of_beds = get_max_beds();
-        model.update_print_volume_state(build_volume);
-        int max_bed = 0;
-        for (const auto& [oid, bed_id] : m_inst_to_bed)
-            max_bed = std::max(bed_id, max_bed);
-        m_number_of_beds = std::min(get_max_beds(), max_bed + 1);
+        const int max_bed = discover_highest_bed(model, build_volume);
+        m_number_of_beds = std::max(1, max_bed + 1);
+        ensure_beds(m_number_of_beds);
         model.update_print_volume_state(build_volume);
         request_next_bed(false);
         set_active_bed(m_number_of_beds != original_number_of_beds ? 0 : stash_active);
@@ -445,18 +485,20 @@ bool MultipleBeds::rearrange_after_load(Model& model, const BuildVolume& build_v
     });
 
     m_legacy_layout = true;
-    int abs_max = get_max_beds();
-    while (true) {
-        // This is to ensure that even objects on linear bed with higher than
-        // allowed index will be rearranged.
+    int abs_max = std::max(m_number_of_beds, 1);
+    for (int pass = 0; pass < 24; ++pass) {
+        // Objects on a legacy linear layout can sit past the plates we have so far.
         m_number_of_beds = abs_max;
+        ensure_beds(abs_max + 1);
         model.update_print_volume_state(build_volume);
         int max_bed = 0;
         for (const auto& [oid, bed_id] : m_inst_to_bed)
             max_bed = std::max(bed_id, max_bed);
         if (max_bed + 1 < abs_max)
             break;
-        abs_max += get_max_beds();
+        if (abs_max >= (1 << 20))
+            break;
+        abs_max *= 2;
     }
     m_number_of_beds = 1;
     m_legacy_layout = false;
@@ -479,8 +521,8 @@ bool MultipleBeds::rearrange_after_load(Model& model, const BuildVolume& build_v
     }
 
     // Now do the rearrangement
-    m_number_of_beds = max_bed + 1;
-    assert(m_number_of_beds <= get_max_beds());
+    m_number_of_beds = std::max(1, max_bed + 1);
+    ensure_beds(m_number_of_beds);
     if (m_number_of_beds == 1)
         return false;
 
@@ -512,7 +554,9 @@ Vec2d MultipleBeds::bed_gap() const
 
 bool MultipleBeds::is_bed_occupied(int i) const
 {
-    return m_occupied_beds_cache[i];
+    if (i < 0 || i >= int(m_occupied_beds_cache.size()))
+        return false;
+    return m_occupied_beds_cache[i] != 0;
 }
 
 
@@ -522,7 +566,8 @@ Vec2crd MultipleBeds::get_bed_gap() const {
 
 void MultipleBeds::ensure_wipe_towers_on_beds(Model& model, const std::vector<std::unique_ptr<Print>>& prints)
 {
-    for (size_t bed_idx = 0; bed_idx < get_number_of_beds(); ++bed_idx) {
+    model.ensure_beds(get_number_of_beds());
+    for (size_t bed_idx = 0; bed_idx < size_t(get_number_of_beds()) && bed_idx < prints.size(); ++bed_idx) {
         ModelWipeTower& mwt = model.get_wipe_tower_vector()[bed_idx];
         double depth = prints[bed_idx]->wipe_tower_data().depth;
         double width = prints[bed_idx]->wipe_tower_data().width;

@@ -26,6 +26,7 @@ typedef struct semver_version_s {
   int patch;
   char * metadata;
   char * prerelease;
+  int revision;
 } semver_t;
 
 /**

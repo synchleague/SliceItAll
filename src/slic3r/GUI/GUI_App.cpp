@@ -9,6 +9,7 @@
 #include "libslic3r/Technologies.hpp"
 #include "GUI_App.hpp"
 #include "DashboardSite.hpp"
+#include "Autosave.hpp"
 #include "GUI_Init.hpp" // IWYU pragma: keep
 #include "GUI_ObjectList.hpp"
 #include "GUI_ObjectManipulation.hpp"
@@ -767,13 +768,14 @@ void GUI_App::post_init()
     if (! this->initialized())
         throw Slic3r::RuntimeError("Calling post_init() while not yet initialized");
 
+    const bool recovered = !this->is_gcode_viewer() && Autosave::instance().offer_recovery();
     if (this->is_gcode_viewer()) {
         if (! this->init_params->input_files.empty())
             this->plater()->load_gcode(wxString::FromUTF8(this->init_params->input_files[0].c_str()));
     }
-    else if (this->init_params->start_downloader) {
+    else if (!recovered && this->init_params->start_downloader) {
         start_download(this->init_params->download_url);
-    } else {
+    } else if (!recovered) {
         if (! this->init_params->preset_substitutions.empty())
             show_substitutions_info(this->init_params->preset_substitutions);
 
@@ -840,6 +842,9 @@ void GUI_App::post_init()
     // show "Did you know" notification
     if (app_config->get_bool("show_hints") && ! is_gcode_viewer())
         plater_->get_notification_manager()->push_hint_notification(true);
+
+    if (!this->is_gcode_viewer())
+        Autosave::instance().start();
 
     // The extra CallAfter() is needed because of Mac, where this is the only way
     // to popup a modal dialog on start without screwing combo boxes.
@@ -3827,17 +3832,9 @@ void GUI_App::app_updater(bool from_user)
         open_browser_with_warning_dialog(from_u8(app_data.url), nullptr, false);
         return;
     }
-    // dialog with new version download (installer or app dependent on system) including path selection
-    AppUpdateDownloadDialog dwnld_dlg(*app_data.version, app_data.target_path);
-    dialog_result = dwnld_dlg.ShowModal();
-    //  Doesn't wish to download
-    if (dialog_result != wxID_OK) {
-        return;
-    }
-    app_data.target_path =dwnld_dlg.get_download_path();
-    // start download
+    // The user already accepted the update. Download the installer and start it.
     this->plater_->get_notification_manager()->push_download_progress_notification(GUI::format(_L("Downloading %1%"), app_data.target_path.filename().string()), std::bind(&AppUpdater::cancel_callback, this->m_app_updater.get()));
-    app_data.start_after = dwnld_dlg.run_after_download();
+    app_data.start_after = true;
     m_app_updater->set_app_data(std::move(app_data));
     m_app_updater->sync_download();
 }

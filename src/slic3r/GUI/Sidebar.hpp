@@ -238,6 +238,7 @@ public:
     void update_sliced_info_sizer();
 
     void enable_buttons(bool enable);
+    void enable_export_buttons(bool enable);
     void set_btn_label(const ActionButtonType btn_type, const wxString& label) const;
     bool show_reslice(bool show) const;
     bool show_generate_supports(bool show) const;

@@ -10,6 +10,7 @@
 ///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
 ///|/
 #include "MainFrame.hpp"
+#include "Autosave.hpp"
 
 #include <wx/panel.h>
 #include <wx/notebook.h>
@@ -92,6 +93,7 @@ struct ProjectSlot {
     Model    parked;
     wxString filename;
     wxString title;
+    int      autosave_id{ 0 };
     bool     live{ false };
     bool     dirty{ false };
 };
@@ -101,6 +103,7 @@ struct ProjectTabs {
     wxPanel* new_tab{ nullptr };
     wxPanel* holder{ nullptr };
     int      serial{ 1 };
+    int      next_autosave_id{ 1 };
     bool     ready{ false };
     bool     switching{ false };
 };
@@ -590,6 +593,7 @@ void MainFrame::park_live_project()
     slot.filename = m_plater->get_project_filename(".3mf");
     slot.dirty = m_plater->is_project_dirty();
     slot.live = false;
+    Autosave::instance().note_parked(slot.autosave_id, into_u8(slot.title));
 }
 
 void MainFrame::activate_project(int slot)
@@ -618,6 +622,7 @@ void MainFrame::activate_project(int slot)
     if (const int page = m_tabpanel->FindPage(target.page); page != wxNOT_FOUND)
         m_tabpanel->SetSelection(size_t(page));
     m_project_tabs->switching = false;
+    Autosave::instance().note_activated(target.autosave_id);
     refresh_project_tab_title();
     if (GLCanvas3D* canvas = m_plater->canvas3D())
         canvas->render();
@@ -667,6 +672,7 @@ void MainFrame::arrange_browser_tabs()
     slot.page = project_page;
     slot.live = true;
     slot.title = _L("Project") + " 1";
+    slot.autosave_id = m_project_tabs->next_autosave_id++;
     m_project_tabs->serial = 2;
     m_project_tabs->slots.push_back(std::move(slot));
     m_tabpanel->InsertNewPage(1, project_page, m_project_tabs->slots.front().title, "", false);
@@ -700,6 +706,7 @@ void MainFrame::new_project_tab()
     ProjectSlot slot;
     slot.page = page;
     slot.title = wxString::Format("%s %d", _L("Project"), m_project_tabs->serial++);
+    slot.autosave_id = m_project_tabs->next_autosave_id++;
     slot.live = false;
     const int plus = m_tabpanel->FindPage(m_project_tabs->new_tab);
     const int insert_at = plus == wxNOT_FOUND ? int(m_tabpanel->GetPageCount()) : plus;
@@ -763,6 +770,9 @@ void MainFrame::close_project_tab(wxWindow* page)
     if (!confirm_close_project(slot))
         return;
 
+    const int autosave_id = m_project_tabs->slots[slot].autosave_id;
+    Autosave::instance().forget_id(autosave_id);
+
     const bool was_live = m_project_tabs->slots[slot].live;
     wxPanel* closing = m_project_tabs->slots[slot].page;
     if (m_plater && m_plater->GetParent() == closing)
@@ -785,6 +795,48 @@ void MainFrame::close_project_tab(wxWindow* page)
         activate_project(next);
     else
         select_active_project_tab();
+}
+
+int MainFrame::live_autosave_id() const
+{
+    const int live = live_project_slot();
+    if (live < 0 || !m_project_tabs)
+        return 0;
+    return m_project_tabs->slots[live].autosave_id;
+}
+
+std::vector<ProjectRecoveryState> MainFrame::project_recovery_states() const
+{
+    std::vector<ProjectRecoveryState> states;
+    if (!m_project_tabs || !m_project_tabs->ready)
+        return states;
+    states.reserve(m_project_tabs->slots.size());
+    for (const ProjectSlot& slot : m_project_tabs->slots) {
+        ProjectRecoveryState state;
+        state.id = slot.autosave_id;
+        state.live = slot.live;
+        state.dirty = slot.live && m_plater ? m_plater->is_project_dirty() : slot.dirty;
+        const wxString filename = slot.live && m_plater ? m_plater->get_project_filename(".3mf") : slot.filename;
+        state.filename = into_u8(filename);
+        state.title = into_u8(slot.title);
+        states.push_back(std::move(state));
+    }
+    return states;
+}
+
+bool MainFrame::copy_parked_project(int autosave_id, Model& model, std::string& filename, std::string& title) const
+{
+    if (!m_project_tabs || autosave_id <= 0)
+        return false;
+    for (const ProjectSlot& slot : m_project_tabs->slots) {
+        if (slot.autosave_id != autosave_id || slot.live)
+            continue;
+        model = slot.parked;
+        filename = into_u8(slot.filename);
+        title = into_u8(slot.title);
+        return true;
+    }
+    return false;
 }
 
 void MainFrame::select_active_project_tab()
@@ -813,6 +865,7 @@ void MainFrame::cycle_project_tabs(int direction)
 
 void MainFrame::shutdown()
 {
+    Autosave::instance().stop();
 #ifdef _WIN32
 	if (m_hDeviceNotify) {
 		::UnregisterDeviceNotification(HDEVNOTIFY(m_hDeviceNotify));
@@ -1472,43 +1525,18 @@ bool MainFrame::can_export_supports() const
 
 bool MainFrame::can_export_gcode() const
 {
-    if (m_plater == nullptr)
-        return false;
-
-    if (m_plater->model().objects.empty())
-        return false;
-
-    if (m_plater->is_export_gcode_scheduled())
-        return false;
-
-    // TODO:: add other filters
-
-    return true;
+    return m_plater != nullptr && m_plater->is_slice_ready_for_export();
 }
 
 bool MainFrame::can_send_gcode() const
 {
-    if (m_plater && ! m_plater->model().objects.empty())
-        if (const DynamicPrintConfig *cfg = wxGetApp().preset_bundle->physical_printers.get_selected_printer_config(); cfg)
-            if (const auto *print_host_opt = cfg->option<ConfigOptionString>("print_host"); print_host_opt)
-                return ! print_host_opt->value.empty();
-    return false;
+    return m_plater != nullptr && m_plater->can_send_to_selected_printer();
 }
 
 bool MainFrame::can_export_gcode_sd() const
 {
-	if (m_plater == nullptr)
-		return false;
-
-	if (m_plater->model().objects.empty())
-		return false;
-
-	if (m_plater->is_export_gcode_scheduled())
-		return false;
-
-	// TODO:: add other filters
-
-	return wxGetApp().removable_drive_manager()->status().has_removable_drives;
+    return m_plater != nullptr && m_plater->is_slice_ready_for_export()
+        && wxGetApp().removable_drive_manager()->status().has_removable_drives;
 }
 
 bool MainFrame::can_eject() const
@@ -2831,6 +2859,27 @@ void MainFrame::add_to_recent_projects(const wxString& filename)
         }
         wxGetApp().app_config->set_recent_projects(recent_projects);
     }
+}
+
+void MainFrame::remove_from_recent_projects(const wxString& filename)
+{
+    if (filename.empty())
+        return;
+    bool changed = false;
+    for (int i = int(m_recent_projects.GetCount()) - 1; i >= 0; --i) {
+        if (wxFileName(m_recent_projects.GetHistoryFile(i)).SameAs(wxFileName(filename))) {
+            m_recent_projects.RemoveFileFromHistory(i);
+            changed = true;
+        }
+    }
+    if (!changed)
+        return;
+    std::vector<std::string> recent_projects;
+    const size_t count = m_recent_projects.GetCount();
+    recent_projects.reserve(count);
+    for (size_t i = 0; i < count; ++i)
+        recent_projects.push_back(into_u8(m_recent_projects.GetHistoryFile(i)));
+    wxGetApp().app_config->set_recent_projects(recent_projects);
 }
 
 void MainFrame::technology_changed()

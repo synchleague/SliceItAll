@@ -165,6 +165,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/PhysicalPrinterDialog.cpp
     GUI/DevicesPanel.hpp
     GUI/DevicesPanel.cpp
+    GUI/Autosave.hpp
+    GUI/Autosave.cpp
     GUI/FilamentRack.hpp
     GUI/FilamentRack.cpp
     GUI/DashboardSite.hpp

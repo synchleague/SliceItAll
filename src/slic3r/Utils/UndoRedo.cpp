@@ -602,6 +602,7 @@ public:
 
 	// Resets the "dirty project" status.
     void 							mark_current_as_saved() { m_saved_snapshot_time = m_active_snapshot_time; }
+    void 							mark_current_as_unsaved() { m_saved_snapshot_time = size_t(-1); }
     bool 							project_modified() const;
 
 	const Selection& 				selection_deserialized() const { return m_selection; }
@@ -1260,6 +1261,7 @@ const Snapshot& Stack::snapshot(size_t time) const { return pimpl->snapshot(time
 size_t Stack::active_snapshot_time() const { return pimpl->active_snapshot_time(); }
 bool Stack::temp_snapshot_active() const { return pimpl->temp_snapshot_active(); }
 void Stack::mark_current_as_saved() { pimpl->mark_current_as_saved(); }
+void Stack::mark_current_as_unsaved() { pimpl->mark_current_as_unsaved(); }
 bool Stack::project_modified() const { return pimpl->project_modified(); }
 
 } // namespace UndoRedo

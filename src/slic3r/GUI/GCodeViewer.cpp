@@ -2391,9 +2391,17 @@ void GCodeViewer::render_legend(float& legend_height)
             longest_percentage_string = _u8L("Percentage");
 
         std::string longest_used_filament_string;
+        double total_used_filament_m = 0.0;
         for (double item : used_filaments_m) {
+            total_used_filament_m += item;
             char buffer[64];
             ::sprintf(buffer, imperial_units ? "%.2f in" : "%.2f m", item);
+            if (::strlen(buffer) > longest_used_filament_string.length())
+                longest_used_filament_string = buffer;
+        }
+        {
+            char buffer[64];
+            ::sprintf(buffer, imperial_units ? "%.2f in" : "%.2f m", total_used_filament_m);
             if (::strlen(buffer) > longest_used_filament_string.length())
                 longest_used_filament_string = buffer;
         }
@@ -2533,6 +2541,26 @@ void GCodeViewer::render_legend(float& legend_height)
             if (m_viewer.is_option_visible(libvgcode::EOptionType::Travels))
                 append_item(EItemType::Line, libvgcode::convert(m_viewer.get_option_color(libvgcode::EOptionType::Travels)), _u8L("Travel"), true, short_time_ui(get_time_dhms(travels_time)),
                     travels_time / time_mode.time, max_time_percent, offsets, 0.0f, 0.0f);
+
+            double total_m = 0.0;
+            double total_g = 0.0;
+            for (double meters : used_filaments_m)
+                total_m += meters;
+            for (double grams : used_filaments_g)
+                total_g += grams;
+            if (total_m > 0.0 || total_g > 0.0) {
+                const std::string& grams_unit  = _u8L("g");
+                const std::string& inches_unit = _u8L("in");
+                const std::string& metres_unit = _CTX_utf8(L_CONTEXT("m", "Metre"), "Metre");
+                ImGui::Separator();
+                ImGui::Dummy({ icon_size, icon_size });
+                ImGui::SameLine();
+                ImGuiPureWrap::text(_u8L("Total"));
+                ImGui::SameLine(offsets[2]);
+                ImGuiPureWrap::text(format("%1$.2f %2%", total_m, imperial_units ? inches_unit : metres_unit));
+                ImGui::SameLine(offsets[3]);
+                ImGuiPureWrap::text(format("%1$.2f %2%", total_g, grams_unit));
+            }
 
             break;
         }
@@ -2911,6 +2939,20 @@ void GCodeViewer::render_legend(float& legend_height)
 
             add_strings_row_to_table(_u8L("Total") + ":", ImGuiPureWrap::COL_ORANGE_LIGHT,
                 short_time_ui(get_time_dhms(time_mode.time)), ImGuiPSWrap::to_ImVec4(ColorRGBA::WHITE()));
+
+            double total_m = 0.0;
+            double total_g = 0.0;
+            const double length_koef = imperial_units ? 1000.0 / ObjectManipulation::in_to_mm : 1.0;
+            for (const auto& filament : m_print_statistics.used_filaments_per_role) {
+                total_m += filament.second.first * length_koef;
+                total_g += filament.second.second;
+            }
+            if (total_m > 0.0 || total_g > 0.0) {
+                const std::string length_unit = imperial_units ? _u8L("in") : _CTX_utf8(L_CONTEXT("m", "Metre"), "Metre");
+                add_strings_row_to_table(_u8L("Used filament") + ":", ImGuiPureWrap::COL_ORANGE_LIGHT,
+                    format("%1$.2f %2%    %3$.2f %4%", total_m, length_unit, total_g, _u8L("g")),
+                    ImGuiPSWrap::to_ImVec4(ColorRGBA::WHITE()));
+            }
 
             ImGui::EndTable();
         }

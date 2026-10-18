@@ -114,6 +114,8 @@ public:
     void new_project();
     void load_project();
     void load_project(const wxString& filename);
+    // Open a crash-recovery 3MF. The project stays unsaved, under the original path when there was one.
+    bool restore_autosaved_project(const wxString& autosave_path, const wxString& original_path);
     // Replace the open model with a parked project. The canvas clipboard is left intact
     // so models copied in one project can be pasted into another.
     void swap_in_model(const Model& source, const wxString& project_filename);
@@ -307,6 +309,10 @@ public:
     void set_project_filename(const wxString& filename);
 
     bool is_export_gcode_scheduled() const;
+    // The active plate has finished slicing and is not slicing or exporting again.
+    bool is_slice_ready_for_export() const;
+    // That plate can be sent to the printer currently selected in the app.
+    bool can_send_to_selected_printer() const;
     
     const Selection& get_selection() const;
     int get_selected_object_idx();

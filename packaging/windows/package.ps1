@@ -38,4 +38,4 @@ foreach ($name in @("SliceItAll.exe", "SliceItAll.dll", "OCCTWrapper.dll", "libg
 New-Item -ItemType Directory -Force -Path (Join-Path $root "dist") | Out-Null
 & $iscc "/DCrtDir=$crt" $iss
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
-Write-Host "Installer written to $root\dist\SliceItAll-0.9.1-win64-setup.exe"
+Write-Host "Installer written to $root\dist\SliceItAll-0.9.2.1-win64-setup.exe"

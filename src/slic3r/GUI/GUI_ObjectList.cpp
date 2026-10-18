@@ -5152,7 +5152,6 @@ ModelsPanel::ModelsPanel(wxWindow* parent)
     auto* add_bed = new AddPlateButton(this);
     m_add_bed = add_bed;
     m_add_bed->SetToolTip(_L("Add another build plate."));
-    m_add_bed->Enable(s_multiple_beds.get_number_of_beds() < s_multiple_beds.get_max_beds());
 
     bar->AddStretchSpacer(1);
     bar->Add(m_add_bed, 0, wxALIGN_CENTER_VERTICAL);
@@ -5205,11 +5204,8 @@ void ModelsPanel::sync_plates()
         }
     }
     model->set_plate_groups(beds, std::max(1, s_multiple_beds.get_number_of_beds()));
-    if (m_add_bed) {
-        const bool can_add = s_multiple_beds.get_number_of_beds() < s_multiple_beds.get_max_beds();
-        if (m_add_bed->IsEnabled() != can_add)
-            m_add_bed->Enable(can_add);
-    }
+    if (m_add_bed && !m_add_bed->IsEnabled())
+        m_add_bed->Enable(true);
 }
 
 void ModelsPanel::add_build_plate()
@@ -5217,6 +5213,7 @@ void ModelsPanel::add_build_plate()
     if (!s_multiple_beds.add_bed())
         return;
     if (Plater* plater = wxGetApp().plater()) {
+        plater->get_fff_prints();
         if (GLCanvas3D* canvas = plater->canvas3D())
             canvas->select_bed(s_multiple_beds.get_number_of_beds() - 1, true);
     }

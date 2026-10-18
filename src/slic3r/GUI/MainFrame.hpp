@@ -24,6 +24,7 @@
 #include <string>
 #include <map>
 #include <memory>
+#include <vector>
 
 #include "GUI_Utils.hpp"
 #include "Event.hpp"
@@ -37,8 +38,19 @@ class wxProgressDialog;
 
 namespace Slic3r {
 
+class Model;
+
 namespace GUI
 {
+
+// One open project, as autosave needs to see it. id 0 is the single platter when project tabs are not in use.
+struct ProjectRecoveryState {
+    int         id { 0 };
+    bool        live { false };
+    bool        dirty { false };
+    std::string filename;
+    std::string title;
+};
 
 class Tab;
 class PrintHostQueueDialog;
@@ -231,6 +243,9 @@ public:
     void        open_project_tab(const wxString& filename = wxString());
     void        close_project_tab(wxWindow* page);
     void        refresh_project_tab_title();
+    int         live_autosave_id() const;
+    std::vector<ProjectRecoveryState> project_recovery_states() const;
+    bool        copy_parked_project(int autosave_id, Model& model, std::string& filename, std::string& title) const;
     void        select_view(const std::string& direction);
     // Propagate changed configuration from the Tab to the Plater and save changes to the AppConfig
     void        on_config_changed(DynamicPrintConfig* cfg) const ;
@@ -241,6 +256,7 @@ public:
     bool save_project_as(const wxString& filename = wxString());
 
     void        add_to_recent_projects(const wxString& filename);
+    void        remove_from_recent_projects(const wxString& filename);
     void        technology_changed();
 
     void    on_account_login(const std::string& token);

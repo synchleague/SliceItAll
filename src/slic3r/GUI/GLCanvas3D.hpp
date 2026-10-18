@@ -8,6 +8,7 @@
 
 #include <stddef.h>
 #include <memory>
+#include <vector>
 #include <chrono>
 #include <cstdint>
 
@@ -543,7 +544,7 @@ private:
 #if SLIC3R_OPENGL_ES
     std::vector<TriangleMesh> m_wipe_tower_meshes;
 #endif // SLIC3R_OPENGL_ES
-    std::array<std::optional<BoundingBoxf>, MAX_NUMBER_OF_BEDS> m_wipe_tower_bounding_boxes;
+    std::vector<std::optional<BoundingBoxf>> m_wipe_tower_bounding_boxes;
 
     GCodeViewer m_gcode_viewer;
 
