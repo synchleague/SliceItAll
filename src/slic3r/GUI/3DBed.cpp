@@ -739,7 +739,8 @@ void Bed3D::init_plate_marks()
     const float cx = float(bed.center().x());
     const float cy = float(bed.center().y());
     const float half = side * 0.5f;
-    const float z = 0.35f;
+    // Stay above the bed mesh and below the first extrusion, so the mark cannot hide brim or the base layer.
+    const float z = 0.02f;
     GLModel::Geometry logo;
     logo.format = { GLModel::Geometry::EPrimitiveType::Triangles, GLModel::Geometry::EVertexLayout::P3T2 };
     logo.add_vertex(Vec3f(cx - half, cy - half, z), Vec2f(0.f, 1.f));
@@ -783,6 +784,7 @@ void Bed3D::render_plate_marks(const Transform3d& view_matrix, const Transform3d
     shader->set_uniform("view_model_matrix", view_matrix);
     shader->set_uniform("projection_matrix", projection_matrix);
     glsafe(::glEnable(GL_DEPTH_TEST));
+    glsafe(::glDepthMask(GL_FALSE));
     glsafe(::glEnable(GL_BLEND));
     glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
     const bool cull = ::glIsEnabled(GL_CULL_FACE);
@@ -793,6 +795,7 @@ void Bed3D::render_plate_marks(const Transform3d& view_matrix, const Transform3d
     if (cull)
         glsafe(::glEnable(GL_CULL_FACE));
     glsafe(::glDisable(GL_BLEND));
+    glsafe(::glDepthMask(GL_TRUE));
     shader->stop_using();
 }
 

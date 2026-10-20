@@ -10,9 +10,9 @@ It is free software. Free to download, free to use on as many computers as you l
 
 ## Install
 
-The Windows installer for version 0.9.2.1 is on the [release page](https://github.com/synchleague/SliceItAll/releases/tag/v0.9.2.1).
+The Windows installer for version 0.9.2.2 is on the [release page](https://github.com/synchleague/SliceItAll/releases/tag/v0.9.2.2).
 
-Run `SliceItAll-0.9.2.1-win64-setup.exe`. It installs Slice it All, adds a Start menu entry, and can add a desktop shortcut. Uninstall it from Windows Settings whenever you want.
+Run `SliceItAll-0.9.2.2-win64-setup.exe`. It installs Slice it All, adds a Start menu entry, and can add a desktop shortcut. Uninstall it from Windows Settings whenever you want.
 
 `SliceItAll-console.exe` is installed beside the app and slices from the command line.
 
@@ -49,4 +49,4 @@ The Windows installer is built with Inno Setup. From the repository root:
 powershell -ExecutionPolicy Bypass -File packaging\windows\package.ps1
 ```
 
-That writes `dist\SliceItAll-0.9.2.1-win64-setup.exe`.
+That writes `dist\SliceItAll-0.9.2.2-win64-setup.exe`.
