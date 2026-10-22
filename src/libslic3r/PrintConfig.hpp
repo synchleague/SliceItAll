@@ -995,6 +995,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionInts,               chamber_temperature))
     ((ConfigOptionInts,               chamber_minimal_temperature))
     ((ConfigOptionBool,               complete_objects))
+    ((ConfigOptionBool,               slice_bed_as_one_object))
     ((ConfigOptionFloats,             colorprint_heights))
     ((ConfigOptionBools,              cooling))
     ((ConfigOptionEnums<CoolingSlowdownLogicType>, cooling_slowdown_logic))

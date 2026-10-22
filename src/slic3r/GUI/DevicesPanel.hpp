@@ -179,6 +179,7 @@ private:
     // 1 is the dashboard. 0 is the open printer.
     int                m_view { 1 };
     wxCheckBox*        m_share { nullptr };
+    wxButton*          m_share_info { nullptr };
     wxStaticText*      m_share_status { nullptr };
     wxTimer            m_share_timer;
     wxTimer            m_job_timer;

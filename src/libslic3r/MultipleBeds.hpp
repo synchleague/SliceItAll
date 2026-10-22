@@ -69,6 +69,10 @@ public:
 	void   reset_to_first_bed();
 	bool   is_bed_locked(int bed) const;
 	void   set_bed_locked(int bed, bool locked);
+	// Writes the current plate count and lock flags onto the model so a 3MF can keep them.
+	void   capture_bed_locks(Model& model) const;
+	// Puts a saved lock list back after the plates have been laid out. No-op when the file has none.
+	void   restore_bed_locks(const Model& model);
 
 	void   request_next_bed(bool show);
 	int    get_active_bed() const       { return m_active_bed; }
@@ -147,7 +151,7 @@ ObjectInstances get_object_instances(const Model& model);
 void restore_instance_offsets(Model& model, const InstanceOffsets &offsets);
 void restore_object_instances(Model& model, const ObjectInstances &object_instances);
 
-void with_single_bed_model_fff(Model &model, const int bed_index, const std::function<void()> &callable);
+void with_single_bed_model_fff(Model &model, const int bed_index, const std::function<void()> &callable, bool slice_as_one_object = false);
 void with_single_bed_model_sla(Model &model, const int bed_index, const std::function<void()> &callable);
 }
 

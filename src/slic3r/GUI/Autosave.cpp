@@ -14,6 +14,7 @@
 
 #include "libslic3r/Format/3mf.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/MultipleBeds.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Utils.hpp"
@@ -526,6 +527,7 @@ struct Autosave::Impl : wxEvtHandler {
         Model model;
         DynamicPrintConfig config;
         try {
+            s_multiple_beds.capture_bed_locks(plater->model());
             model = plater->model();
             if (wxGetApp().preset_bundle)
                 config = wxGetApp().preset_bundle->full_config_secure();

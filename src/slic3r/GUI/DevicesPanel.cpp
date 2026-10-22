@@ -40,6 +40,7 @@
 #include <wx/sizer.h>
 #include <wx/datetime.h>
 #include <wx/stattext.h>
+#include <wx/textctrl.h>
 #include <wx/scrolwin.h>
 #include <wx/dnd.h>
 #include <wx/filename.h>
@@ -4148,6 +4149,117 @@ void mark_device_cards(wxSizer* rows, const std::string& selected_id)
     }
 }
 
+void split_share_url(const wxString& url, wxString& scheme, wxString& tail)
+{
+    const size_t scheme_end = url.find("://");
+    const size_t host = scheme_end == wxString::npos ? 0 : scheme_end + 3;
+    scheme = scheme_end == wxString::npos ? wxString() : url.substr(0, host);
+    const size_t colon = url.find(':', host);
+    tail = colon == wxString::npos ? wxString() : url.substr(colon);
+}
+
+// The host is painted as a black bar until the row is clicked.
+class UrlCover : public wxPanel
+{
+public:
+    UrlCover(wxWindow* parent, const wxString& url)
+        : wxPanel(parent)
+    {
+        split_share_url(url, m_scheme, m_tail);
+        SetBackgroundColour(parent->GetBackgroundColour());
+        SetCursor(wxCursor(wxCURSOR_HAND));
+        const wxSize scheme = GetTextExtent(m_scheme);
+        const wxSize rest = GetTextExtent(m_tail);
+        SetMinSize(wxSize(scheme.x + 140 + rest.x + 16, std::max(scheme.y, rest.y) + 8));
+        Bind(wxEVT_PAINT, &UrlCover::on_paint, this);
+    }
+
+private:
+    void on_paint(wxPaintEvent&)
+    {
+        wxPaintDC dc(this);
+        dc.SetFont(GetFont());
+        dc.SetTextForeground(wxGetApp().get_label_clr_default());
+        const int text_h = std::max(1, dc.GetCharHeight());
+        const int y = std::max(0, (GetClientSize().y - text_h) / 2);
+        int x = 0;
+        dc.DrawText(m_scheme, x, y);
+        x += dc.GetTextExtent(m_scheme).x + 4;
+        dc.SetBrush(*wxBLACK_BRUSH);
+        dc.SetPen(wxPen(wxColour(90, 90, 98)));
+        dc.DrawRoundedRectangle(x, y, 132, text_h, 3);
+        dc.DrawText(m_tail, x + 136, y);
+    }
+
+    wxString m_scheme;
+    wxString m_tail;
+};
+
+class MaskedUrl : public wxPanel
+{
+public:
+    MaskedUrl(wxWindow* parent, const wxString& url)
+        : wxPanel(parent)
+    {
+        SetBackgroundColour(parent->GetBackgroundColour());
+        auto* row = new wxBoxSizer(wxHORIZONTAL);
+        auto* cover = new UrlCover(this, url);
+        auto* field = new wxTextCtrl(this, wxID_ANY, url, wxDefaultPosition, wxDefaultSize, wxTE_READONLY | wxBORDER_SIMPLE);
+        wxGetApp().UpdateDarkUI(field);
+        field->Hide();
+        field->SetMinSize(wxSize(std::max(cover->GetMinSize().x, field->GetTextExtent(url).x + 24), -1));
+        row->Add(cover, 0, wxALIGN_CENTER_VERTICAL);
+        row->Add(field, 1, wxEXPAND);
+        SetSizer(row);
+        cover->Bind(wxEVT_LEFT_DOWN, [this, cover, field](wxMouseEvent&) {
+            cover->Hide();
+            field->Show();
+            Layout();
+            wxWindow* top = this;
+            while (top->GetParent() != nullptr && dynamic_cast<wxDialog*>(top) == nullptr)
+                top = top->GetParent();
+            top->Layout();
+            if (auto* dialog = dynamic_cast<wxDialog*>(top))
+                dialog->Fit();
+            field->SetFocus();
+            field->SelectAll();
+        });
+    }
+};
+
+void show_dashboard_share_dialog(wxWindow* parent)
+{
+    wxDialog dialog(parent, wxID_ANY, _L("Open on another device"));
+    wxGetApp().UpdateDarkUI(&dialog);
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    auto* intro = new wxStaticText(&dialog, wxID_ANY, _L("Open this page from another device on your home network."));
+    intro->Wrap(440);
+    sizer->Add(intro, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
+    auto* hint = new wxStaticText(&dialog, wxID_ANY, _L("Click an address to show it."));
+    sizer->Add(hint, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 10);
+
+    const std::vector<std::string> urls = DashboardSite::instance().urls();
+    if (urls.empty()) {
+        sizer->Add(new wxStaticText(&dialog, wxID_ANY, _L("The dashboard site is not running.")), 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
+    } else {
+        for (const std::string& url : urls)
+            sizer->Add(new MaskedUrl(&dialog, from_u8(url)), 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 8);
+    }
+
+    auto* note = new wxStaticText(&dialog, wxID_ANY, _L("This page stays on your home network. From outside the house, connect a VPN to this network first. If Windows asks, allow Slice it All on private networks."));
+    note->Wrap(440);
+    sizer->Add(note, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
+
+    auto* close = new wxButton(&dialog, wxID_CANCEL, _L("Close"));
+    wxGetApp().UpdateDarkUI(close, true);
+    sizer->Add(close, 0, wxALIGN_RIGHT | wxALL, 12);
+    dialog.SetSizer(sizer);
+    dialog.Fit();
+    dialog.CentreOnParent();
+    dialog.SetEscapeId(wxID_CANCEL);
+    dialog.ShowModal();
+}
+
 } // namespace
 
 DevicesPanel::DevicesPanel(wxWindow* parent)
@@ -4170,9 +4282,18 @@ DevicesPanel::DevicesPanel(wxWindow* parent)
     auto* share_text = new wxBoxSizer(wxVERTICAL);
     m_share = new wxCheckBox(share, wxID_ANY, _L("Share this dashboard on the home network"));
     m_share->SetValue(wxGetApp().app_config && wxGetApp().app_config->get_bool("dashboard_site"));
+    auto* share_line = new wxBoxSizer(wxHORIZONTAL);
+    share_line->Add(m_share, 0, wxALIGN_CENTER_VERTICAL);
+    m_share_info = new wxButton(share, wxID_ANY, _L("How to open") + dots);
+    m_share_info->SetToolTip(_L("Show how to open this dashboard from another device. The address stays hidden until you click it."));
+    wxGetApp().UpdateDarkUI(m_share_info, true);
+    m_share_info->Hide();
+    share_line->Add(m_share_info, 0, wxLEFT | wxALIGN_CENTER_VERTICAL, 8);
     m_share_status = new wxStaticText(share, wxID_ANY, wxString());
-    share_text->Add(m_share, 0, wxEXPAND);
+    m_share_status->Hide();
+    share_text->Add(share_line, 0, wxEXPAND);
     share_text->Add(m_share_status, 0, wxEXPAND | wxTOP, 4);
+    m_share_info->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { show_dashboard_share_dialog(this); });
     share_row->Add(share_text, 1, wxEXPAND | wxRIGHT, 8);
     m_back = new wxButton(share, wxID_ANY, _L("Dashboard"));
     m_back->SetToolTip(_L("Return to the dashboard."));
@@ -4748,17 +4869,13 @@ void DevicesPanel::rebuild_lists()
 
 void DevicesPanel::update_share_status()
 {
-    if (!m_share_status)
-        return;
-    wxString text = _L("Open this page from another device on your home network.");
-    for (const std::string& url : DashboardSite::instance().urls()) {
-        text += "\n";
-        text += from_u8(url);
+    if (m_share_info)
+        m_share_info->Show(DashboardSite::instance().running());
+    if (m_share_status) {
+        m_share_status->SetLabel(wxString());
+        m_share_status->Hide();
     }
-    text += "\n";
-    text += _L("This page stays on your home network. From outside the house, connect a VPN to this network first. If Windows asks, allow Slice it All on private networks.");
-    m_share_status->SetLabel(text);
-    m_share_status->Wrap(640);
+    Layout();
 }
 
 void DevicesPanel::apply_dashboard_site()
@@ -4771,10 +4888,11 @@ void DevicesPanel::apply_dashboard_site()
         DashboardSite::instance().stop();
         if (m_share_timer.IsRunning())
             m_share_timer.Stop();
-        if (m_share_status) {
-            m_share_status->SetLabel(_L("Turn this on to open the same dashboard in a browser on this network. From outside the house, use a VPN into this network."));
-            m_share_status->Wrap(640);
-        }
+        if (m_share_info)
+            m_share_info->Hide();
+        if (m_share_status)
+            m_share_status->Hide();
+        Layout();
         return;
     }
 
@@ -4782,12 +4900,16 @@ void DevicesPanel::apply_dashboard_site()
     std::string error;
     if (!DashboardSite::instance().running()
         && !DashboardSite::instance().start(DashboardSite::default_port, error)) {
+        if (m_share_info)
+            m_share_info->Hide();
         if (m_share_status) {
+            m_share_status->Show();
             m_share_status->SetLabel(error == "in_use"
                 ? _L("Port 8765 is already in use on this computer.")
                 : _L("The dashboard site could not start."));
             m_share_status->Wrap(640);
         }
+        Layout();
         return;
     }
     if (!m_share_timer.IsRunning())

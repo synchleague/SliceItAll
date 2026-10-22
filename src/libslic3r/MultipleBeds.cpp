@@ -240,6 +240,32 @@ void MultipleBeds::set_bed_locked(int bed, bool locked)
     m_bed_locked[size_t(bed)] = locked ? 1 : 0;
 }
 
+void MultipleBeds::capture_bed_locks(Model& model) const
+{
+    const int count = std::max(0, m_number_of_beds);
+    model.bed_locks_known = true;
+    model.bed_count = count;
+    model.bed_locked.assign(size_t(count), 0);
+    for (int i = 0; i < count && i < int(m_bed_locked.size()); ++i)
+        model.bed_locked[size_t(i)] = m_bed_locked[size_t(i)] ? 1 : 0;
+}
+
+void MultipleBeds::restore_bed_locks(const Model& model)
+{
+    if (!model.bed_locks_known)
+        return;
+    int beds = std::max(m_number_of_beds, std::max(model.bed_count, 1));
+    for (size_t i = 0; i < model.bed_locked.size(); ++i)
+        if (model.bed_locked[i])
+            beds = std::max(beds, int(i) + 1);
+    m_number_of_beds = beds;
+    m_minimum_beds = std::max(m_minimum_beds, beds);
+    ensure_beds(beds);
+    std::fill(m_bed_locked.begin(), m_bed_locked.end(), 0);
+    for (size_t i = 0; i < model.bed_locked.size() && i < m_bed_locked.size(); ++i)
+        m_bed_locked[i] = model.bed_locked[i] ? 1 : 0;
+}
+
 void MultipleBeds::set_active_bed(int i)
 {
     if (i >= 0 && i < m_number_of_beds) {
@@ -301,19 +327,26 @@ void restore_object_instances(Model& model, const ObjectInstances &object_instan
     model.objects = objects;
 }
 
-void with_single_bed_model_fff(Model &model, const int bed_index, const std::function<void()> &callable) {
+void with_single_bed_model_fff(Model &model, const int bed_index, const std::function<void()> &callable, bool slice_as_one_object) {
     const InstanceOffsets original_offssets{MultipleBedsUtils::get_instance_offsets(model)};
     const ObjectInstances original_objects{get_object_instances(model)};
     const int original_bed{s_multiple_beds.get_active_bed()};
+    ModelObject* merged_view = nullptr;
     Slic3r::ScopeGuard guard([&]() {
         restore_object_instances(model, original_objects);
         restore_instance_offsets(model, original_offssets);
         s_multiple_beds.set_active_bed(original_bed);
+        ModelObject::release(merged_view);
     });
 
     s_multiple_beds.move_from_bed_to_first_bed(model, bed_index);
     s_multiple_beds.remove_instances_outside_outside_bed(model, bed_index);
     s_multiple_beds.set_active_bed(bed_index);
+    if (slice_as_one_object) {
+        merged_view = ModelObject::merged_for_slicing(model, bed_index);
+        if (merged_view)
+            model.objects = { merged_view };
+    }
     callable();
 }
 

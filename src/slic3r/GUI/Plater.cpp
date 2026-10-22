@@ -1760,6 +1760,11 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
             this->model.get_custom_gcode_per_print_z_vector() = model.get_custom_gcode_per_print_z_vector();
             this->model.get_wipe_tower_vector()               = model.get_wipe_tower_vector();
             this->model.get_virtual_extruders()               = model.get_virtual_extruders();
+            if (model.bed_locks_known) {
+                this->model.bed_locks_known = true;
+                this->model.bed_count = model.bed_count;
+                this->model.bed_locked = model.bed_locked;
+            }
 
             FullSpectrum::remap_full_spectrum_on_import(
                 model,
@@ -1988,6 +1993,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
     ensure_prints(s_multiple_beds.get_number_of_beds());
     s_multiple_beds.ensure_wipe_towers_on_beds(model, fff_prints);
     s_multiple_beds.update_shown_beds(model, q->build_volume());
+    s_multiple_beds.restore_bed_locks(model);
 
     update((unsigned int)UpdateParams::FORCE_BACKGROUND_PROCESSING_UPDATE);
 
@@ -2403,6 +2409,10 @@ void Plater::priv::reset()
     // Stop and reset the Print content.
     this->background_process.reset();
     model.clear_objects();
+    model.bed_locks_known = false;
+    model.bed_count = 0;
+    model.bed_locked.clear();
+    s_multiple_beds.reset_to_first_bed();
     update();
     // Delete object from Sidebar list. Do it after update, so that the GLScene selection is updated with the modified model.
     sidebar->obj_list()->delete_all_objects_from_list();
@@ -2658,9 +2668,10 @@ std::vector<Print::ApplyStatus> apply_to_inactive_beds(
             continue;
         }
         using MultipleBedsUtils::with_single_bed_model_fff;
+        const bool slice_as_one = config.has("slice_bed_as_one_object") && config.opt_bool("slice_bed_as_one_object");
         with_single_bed_model_fff(model, bed_index, [&](){
             result[bed_index] = print->apply(model, config);
-        });
+        }, slice_as_one);
     }
     return result;
 }
@@ -2773,10 +2784,11 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
     std::vector<std::string> warnings;
     // Apply new config to the possibly running background task and give the user feedback on warnings.
     if (printer_technology == ptFFF) {
+        const bool slice_as_one = full_config.has("slice_bed_as_one_object") && full_config.opt_bool("slice_bed_as_one_object");
         with_single_bed_model_fff(q->model(), s_multiple_beds.get_active_bed(), [&](){
             invalidated = background_process.apply(q->model(), full_config, &warnings);
             apply_statuses[s_multiple_beds.get_active_bed()] = invalidated;
-        });
+        }, slice_as_one);
     } else if (printer_technology == ptSLA) {
         DynamicPrintConfig original_config = wxGetApp().preset_bundle->original_config();
         with_single_bed_model_sla(q->model(), s_multiple_beds.get_active_bed(), [&](){
@@ -2805,13 +2817,14 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
         for (std::size_t bed_index{0}; bed_index < q->p->fff_prints.size(); ++bed_index) {
             const std::unique_ptr<Print> &print{q->p->fff_prints[bed_index]};
             using MultipleBedsUtils::with_single_bed_model_fff;
+            const bool slice_as_one = full_config.has("slice_bed_as_one_object") && full_config.opt_bool("slice_bed_as_one_object");
             with_single_bed_model_fff(model, bed_index, [&](){
                 std::vector<std::string> warnings;
                 std::string err{print->validate(&warnings)};
                 if (!err.empty()) {
                     s_print_statuses[bed_index] = PrintStatus::invalid;
                 }
-            });
+            }, slice_as_one);
         }
     }
 
@@ -4922,6 +4935,11 @@ void Plater::swap_in_model(const Model& source, const wxString& project_filename
     live.get_wipe_tower_vector() = std::move(extras.get_wipe_tower_vector());
     live.sla_workflow_uuid = extras.sla_workflow_uuid;
     live.get_virtual_extruders() = std::move(extras.get_virtual_extruders());
+    live.bed_locks_known = extras.bed_locks_known;
+    live.bed_count = extras.bed_count;
+    live.bed_locked = extras.bed_locked;
+    s_multiple_beds.update_shown_beds(live, build_volume());
+    s_multiple_beds.restore_bed_locks(live);
 
     set_project_filename(project_filename);
     clear_undo_redo_stack_main();
@@ -7007,6 +7025,7 @@ bool Plater::export_3mf(const boost::filesystem::path& output_path)
     // take care about private data stored into .3mf
     // modify model
     publish(p->model);
+    s_multiple_beds.capture_bed_locks(p->model);
 
     DynamicPrintConfig cfg = wxGetApp().preset_bundle->full_config_secure();
     const std::string path_u8 = into_u8(path);

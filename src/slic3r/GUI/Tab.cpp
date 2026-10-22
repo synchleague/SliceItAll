@@ -1804,6 +1804,9 @@ void TabPrint::build()
 
     page = add_options_page(L("Support material"), "support");
         category_path = "support-material_1698#";
+        optgroup = page->new_optgroup(L("Build plate"));
+        optgroup->append_single_option_line("slice_bed_as_one_object");
+
         optgroup = page->new_optgroup(L("Support material"));
         optgroup->append_single_option_line("support_material", category_path + "generate-support-material");
         optgroup->append_single_option_line("support_material_auto", category_path + "auto-generated-supports");

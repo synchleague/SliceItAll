@@ -98,6 +98,7 @@ const std::string SLA_SUPPORT_POINTS_FILE = "Metadata/Slic3r_PE_sla_support_poin
 const std::string SLA_DRAIN_HOLES_FILE = "Metadata/Slic3r_PE_sla_drain_holes.txt";
 const std::string CUSTOM_GCODE_PER_PRINT_Z_FILE = "Metadata/Prusa_Slicer_custom_gcode_per_print_z.xml";
 const std::string WIPE_TOWER_INFORMATION_FILE = "Metadata/Prusa_Slicer_wipe_tower_information.xml";
+const std::string BED_LOCKS_FILE = "Metadata/SliceItAll_bed_locks.xml";
 const std::string CUT_INFORMATION_FILE = "Metadata/Prusa_Slicer_cut_information.xml";
 
 static constexpr const char *RELATIONSHIP_TAG = "Relationship";
@@ -571,6 +572,7 @@ namespace Slic3r {
         void _extract_custom_gcode_per_print_z_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat);
         void _extract_wipe_tower_information_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat, Model& model);
         void _extract_wipe_tower_information_from_archive_legacy(::mz_zip_archive &archive, const mz_zip_archive_file_stat &stat, Model& model);
+        void _extract_bed_locks_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat, Model& model);
 
         void _extract_print_config_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat, DynamicPrintConfig& config, ConfigSubstitutionContext& subs_context, const std::string& archive_filename);
         bool _extract_model_config_from_archive(mz_zip_archive& archive, const mz_zip_archive_file_stat& stat, Model& model);
@@ -847,6 +849,9 @@ namespace Slic3r {
                 else if (boost::algorithm::iequals(name, WIPE_TOWER_INFORMATION_FILE)) {
                     // extract wipe tower information file
                     _extract_wipe_tower_information_from_archive(archive, stat, model);
+                }
+                else if (boost::algorithm::iequals(name, BED_LOCKS_FILE)) {
+                    _extract_bed_locks_from_archive(archive, stat, model);
                 }
                 else if (boost::algorithm::iequals(name, MODEL_CONFIG_FILE)) {
                     // extract slic3r model config file
@@ -1749,6 +1754,57 @@ namespace Slic3r {
                 }
             }
 
+        }
+    }
+
+    void _3MF_Importer::_extract_bed_locks_from_archive(::mz_zip_archive& archive, const mz_zip_archive_file_stat& stat, Model& model)
+    {
+        if (stat.m_uncomp_size == 0)
+            return;
+        std::string buffer((size_t)stat.m_uncomp_size, 0);
+        mz_bool res = mz_zip_reader_extract_to_mem(&archive, stat.m_file_index, (void*)buffer.data(), (size_t)stat.m_uncomp_size, 0);
+        if (res == 0) {
+            add_error("Error while reading bed lock data to buffer");
+            return;
+        }
+
+        std::istringstream iss(buffer);
+        pt::ptree main_tree;
+        try {
+            pt::read_xml(iss, main_tree);
+        } catch (const std::exception&) {
+            add_error("Error while reading bed lock information.");
+            return;
+        }
+
+        for (const auto& node : main_tree) {
+            if (node.first != "bed_locks")
+                continue;
+            model.bed_locks_known = true;
+            model.bed_locked.clear();
+            try {
+                model.bed_count = node.second.get<int>("<xmlattr>.bed_count");
+            } catch (const std::exception&) {
+                model.bed_count = 0;
+            }
+            for (const auto& plate : node.second) {
+                if (plate.first != "plate")
+                    continue;
+                try {
+                    const int idx = plate.second.get<int>("<xmlattr>.bed_idx");
+                    const int locked = plate.second.get<int>("<xmlattr>.locked");
+                    if (idx < 0)
+                        continue;
+                    if (int(model.bed_locked.size()) <= idx)
+                        model.bed_locked.resize(size_t(idx) + 1, 0);
+                    model.bed_locked[size_t(idx)] = locked ? 1 : 0;
+                } catch (const std::exception&) {
+                    add_error("Error while reading bed lock information.");
+                    return;
+                }
+            }
+            if (model.bed_count < int(model.bed_locked.size()))
+                model.bed_count = int(model.bed_locked.size());
         }
     }
 
@@ -2833,6 +2889,7 @@ namespace Slic3r {
         bool _add_model_config_file_to_archive(mz_zip_archive& archive, const Model& model, const IdToObjectDataMap &objects_data);
         bool _add_custom_gcode_per_print_z_file_to_archive(mz_zip_archive& archive, Model& model, const DynamicPrintConfig* config);
         bool _add_wipe_tower_information_file_to_archive( mz_zip_archive& archive, Model& model);
+        bool _add_bed_locks_file_to_archive(mz_zip_archive& archive, const Model& model);
         bool _add_full_spectrum_file_to_archive(mz_zip_archive& archive, const Model& model, const DynamicPrintConfig* config);
     };
 
@@ -2943,6 +3000,13 @@ namespace Slic3r {
 
         // Adds wipe tower information ("Metadata/Prusa_Slicer_wipe_tower_information.xml").
         if (!_add_wipe_tower_information_file_to_archive(archive, model)) {
+            close_zip_writer(&archive);
+            boost::filesystem::remove(filename);
+            return false;
+        }
+
+        // Locked build plates ("Metadata/SliceItAll_bed_locks.xml").
+        if (!_add_bed_locks_file_to_archive(archive, model)) {
             close_zip_writer(&archive);
             boost::filesystem::remove(filename);
             return false;
@@ -3961,6 +4025,33 @@ bool _3MF_Exporter::_add_wipe_tower_information_file_to_archive( mz_zip_archive&
         }
     }
 
+    return true;
+}
+
+bool _3MF_Exporter::_add_bed_locks_file_to_archive(mz_zip_archive& archive, const Model& model)
+{
+    if (!model.bed_locks_known)
+        return true;
+
+    pt::ptree tree;
+    pt::ptree& root = tree.add("bed_locks", "");
+    root.put("<xmlattr>.bed_count", std::max(model.bed_count, int(model.bed_locked.size())));
+    for (size_t i = 0; i < model.bed_locked.size(); ++i) {
+        pt::ptree& plate = root.add("plate", "");
+        plate.put("<xmlattr>.bed_idx", i);
+        plate.put("<xmlattr>.locked", model.bed_locked[i] ? 1 : 0);
+    }
+
+    std::ostringstream oss;
+    boost::property_tree::write_xml(oss, tree);
+    std::string out = oss.str();
+    boost::replace_all(out, "><", ">\n<");
+    if (out.empty())
+        return true;
+    if (!mz_zip_writer_add_mem(&archive, BED_LOCKS_FILE.c_str(), (const void*)out.data(), out.length(), MZ_DEFAULT_COMPRESSION)) {
+        add_error("Unable to add bed lock information file to archive");
+        return false;
+    }
     return true;
 }
 

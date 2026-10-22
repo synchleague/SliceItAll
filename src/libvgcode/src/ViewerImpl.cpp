@@ -1210,7 +1210,14 @@ void ViewerImpl::update_colors_texture()
 #endif // ENABLE_OPENGL_ES
 
     const size_t top_layer_id = m_settings.top_layer_only_view_range ? m_layers.get_view_range()[1] : 0;
-    const bool color_top_layer_only = m_view_range.get_full()[1] != m_view_range.get_visible()[1];
+    const Interval& visible = m_view_range.get_visible();
+    // Gray the layers below the top one only while the slider itself is on that
+    // top layer. A scrub through the whole gcode keeps the real colors.
+    const bool scrub_starts_on_top_layer = m_settings.top_layer_only_view_range
+        && !m_vertices.empty()
+        && visible[0] < m_vertices.size()
+        && m_vertices[visible[0]].layer_id >= top_layer_id;
+    const bool color_top_layer_only = scrub_starts_on_top_layer && m_view_range.get_full()[1] != visible[1];
 
     // Based on current settings and slider position, we might want to render some
     // vertices as dark grey. Use either that or the normal color (from the cache).
@@ -1426,6 +1433,10 @@ void ViewerImpl::set_view_visible_range(Interval::value_type min, Interval::valu
     // force update of the full range, to avoid clamping the visible range with full old values
     // when calling m_view_range.set_visible()
     update_view_full_range();
+    // The horizontal slider covers the whole toolpath. A top-layer-only enabled
+    // range would clamp the thumb back to the latest layer.
+    const Interval& full = m_view_range.get_full();
+    m_view_range.set_enabled(full);
     m_view_range.set_visible(min, max);
     update_enabled_entities();
     //m_settings.update_colors = true;

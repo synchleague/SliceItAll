@@ -542,6 +542,12 @@ public:
     bool is_cut() const { return cut_id.valid(); }
     bool has_connectors() const;
 
+    // Slice every printable instance currently in the model as one part.
+    // Returns nullptr when the plate already has a single printable instance.
+    // The caller owns the result and frees it with release().
+    static ModelObject* merged_for_slicing(Model& model, int cache_key);
+    static void release(ModelObject* object);
+
 private:
     friend class Model;
     // This constructor assigns new ID to this ModelObject and its config.
@@ -1290,6 +1296,11 @@ public:
     CustomGCode::Info& custom_gcode_per_print_z();
     const CustomGCode::Info& custom_gcode_per_print_z() const;
     std::vector<CustomGCode::Info>& get_custom_gcode_per_print_z_vector() { return custom_gcode_per_print_z_vector; }
+
+    // Locked plates travel with the project file. bed_locks_known is false for files saved before this existed.
+    bool bed_locks_known { false };
+    int  bed_count { 0 };
+    std::vector<char> bed_locked;
 
     std::string sla_workflow_uuid; // This is a temporary place to put this, just for the 2.9.x series.
     // It is probably the less invasive way to make this propagate from the frontend to the backend.

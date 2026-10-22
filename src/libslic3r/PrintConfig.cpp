@@ -3316,6 +3316,13 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<SlicingMode>(SlicingMode::Regular));
 
+    def = this->add("slice_bed_as_one_object", coBool);
+    def->label = L("Treat build plate as one object");
+    def->category = L("Support material");
+    def->tooltip = L("Slice every model on a build plate as one part. A separate support model is printed with the part, and generated supports follow the combined shape instead of being built through the other models. The plate shares one set of print settings.");
+    def->mode = comSimple;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("support_material", coBool);
     def->label = L("Generate support material");
     def->category = L("Support material");

@@ -23,6 +23,9 @@
 #include "MultipleBeds.hpp"
 
 #include <float.h>
+#include <map>
+#include <sstream>
+#include <iomanip>
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
@@ -64,6 +67,9 @@ Model& Model::assign_copy(const Model &rhs)
     this->wipe_tower_vector = rhs.wipe_tower_vector;
     this->sla_workflow_uuid = rhs.sla_workflow_uuid;
     this->virtual_extruders = rhs.virtual_extruders;
+    this->bed_locks_known = rhs.bed_locks_known;
+    this->bed_count = rhs.bed_count;
+    this->bed_locked = rhs.bed_locked;
 
     return *this;
 }
@@ -89,6 +95,9 @@ Model& Model::assign_copy(Model &&rhs)
     this->wipe_tower_vector = rhs.wipe_tower_vector;
     this->sla_workflow_uuid = rhs.sla_workflow_uuid;
     this->virtual_extruders = std::move(rhs.virtual_extruders);
+    this->bed_locks_known = rhs.bed_locks_known;
+    this->bed_count = rhs.bed_count;
+    this->bed_locked = std::move(rhs.bed_locked);
 
     return *this;
 }
@@ -1938,6 +1947,127 @@ void check_model_ids_equal(const Model &model1, const Model &model2)
 }
 
 #endif /* NDEBUG */
+
+namespace {
+
+bool instance_on_plate(const ModelObject& object, const ModelInstance& instance)
+{
+    return object.printable && instance.printable;
+}
+
+void append_matrix(std::ostringstream& out, const Transform3d& trafo)
+{
+    for (int col = 0; col < 4; ++col)
+        for (int row = 0; row < 4; ++row)
+            out << trafo.matrix()(row, col) << ',';
+}
+
+void append_config(std::ostringstream& out, const ModelConfig& config)
+{
+    for (const std::string& key : config.keys())
+        out << key << '=' << config.opt_serialize(key) << ',';
+}
+
+std::string bed_merge_fingerprint(const Model& model)
+{
+    std::ostringstream out;
+    out << std::setprecision(9);
+    for (const ModelObject* object : model.objects) {
+        out << "o" << object->id().id << ':';
+        append_config(out, object->config);
+        out << ':' << object->layer_height_profile.get().size() << ':' << object->layer_config_ranges.size() << ';';
+        for (const ModelInstance* instance : object->instances) {
+            if (!instance_on_plate(*object, *instance))
+                continue;
+            out << "i" << instance->id().id << ':';
+            append_matrix(out, instance->get_matrix());
+            out << ';';
+        }
+        for (const ModelVolume* volume : object->volumes) {
+            const indexed_triangle_set& its = volume->mesh().its;
+            out << "v" << volume->id().id << ':' << int(volume->type()) << ':';
+            append_config(out, volume->config);
+            out << ':'
+                << volume->supported_facets.timestamp() << ':'
+                << volume->seam_facets.timestamp() << ':'
+                << volume->mm_segmentation_facets.timestamp() << ':'
+                << volume->fuzzy_skin_facets.timestamp() << ':'
+                << its.vertices.size() << ':' << its.indices.size() << ':';
+            append_matrix(out, volume->get_matrix());
+            if (!its.vertices.empty()) {
+                const Vec3f& a = its.vertices.front();
+                const Vec3f& b = its.vertices.back();
+                out << a.x() << ',' << a.y() << ',' << a.z() << ','
+                    << b.x() << ',' << b.y() << ',' << b.z();
+            }
+            out << ';';
+        }
+    }
+    return out.str();
+}
+
+int printable_instance_count(const Model& model)
+{
+    int count = 0;
+    for (const ModelObject* object : model.objects)
+        for (const ModelInstance* instance : object->instances)
+            if (instance_on_plate(*object, *instance))
+                ++count;
+    return count;
+}
+
+} // namespace
+
+ModelObject* ModelObject::merged_for_slicing(Model& model, int cache_key)
+{
+    if (printable_instance_count(model) < 2)
+        return nullptr;
+
+    struct Slot {
+        std::string fingerprint;
+        ModelObject* object = nullptr;
+    };
+    static std::map<int, Slot> cache;
+
+    const std::string fingerprint = bed_merge_fingerprint(model);
+    Slot& slot = cache[cache_key];
+    if (!slot.object || slot.fingerprint != fingerprint) {
+        delete slot.object;
+        ModelObject* merged = new ModelObject(&model);
+        merged->name = "Build plate";
+        merged->add_instance();
+        for (ModelObject* object : model.objects) {
+            const ConfigOption* object_extruder = object->volumes.size() == 1 ? object->config.option("extruder") : nullptr;
+            for (ModelInstance* instance : object->instances) {
+                if (!instance_on_plate(*object, *instance))
+                    continue;
+                const Transform3d instance_matrix = instance->get_matrix();
+                for (const ModelVolume* volume : object->volumes) {
+                    ModelVolume* baked = merged->add_volume(*volume);
+                    baked->set_transformation(instance_matrix * volume->get_matrix());
+                    if (object_extruder)
+                        baked->config.set_key_value("extruder", object_extruder->clone());
+                }
+            }
+        }
+        merged->sort_volumes(true);
+        merged->center_around_origin();
+        merged->translate_instances(-merged->origin_translation);
+        merged->origin_translation = Vec3d::Zero();
+        merged->assign_new_unique_ids_recursive();
+        slot.object = merged;
+        slot.fingerprint = fingerprint;
+    }
+
+    ModelObject* view = ModelObject::new_copy(*slot.object);
+    view->set_model(&model);
+    return view;
+}
+
+void ModelObject::release(ModelObject* object)
+{
+    delete object;
+}
 
 }
 

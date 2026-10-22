@@ -365,10 +365,11 @@ bool process_actions(Data& cli, const DynamicPrintConfig& print_config, std::vec
             }
 
             update_instances_outside_state(model, print_config);
+            const bool slice_as_one = print_config.has("slice_bed_as_one_object") && print_config.opt_bool("slice_bed_as_one_object");
             MultipleBedsUtils::with_single_bed_model_fff(model, 0, [&print, &model, &print_config]()
             {
                 print->apply(model, print_config);
-            });
+            }, slice_as_one);
 
             std::string err = print->validate();
             if (!err.empty()) {

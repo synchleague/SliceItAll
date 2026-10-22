@@ -180,8 +180,9 @@ void AppConfig::set_defaults()
         set("use_retina_opengl", "1");
 #endif // __APPLE__
 
+    // The bottom preview slider scrubs the whole toolpath. "1" keeps it on the top layer only.
     if (get("seq_top_layer_only").empty())
-        set("seq_top_layer_only", "1");
+        set("seq_top_layer_only", "0");
 
     if (get("use_perspective_camera").empty())
         set("use_perspective_camera", "1");
@@ -435,7 +436,17 @@ std::string AppConfig::load(const std::string &path)
 
     // Override missing or keys with their defaults.
     this->set_defaults();
-    m_dirty = false;
+
+    // Older builds defaulted the sequential slider to the top layer, so the
+    // bottom gcode slider only walked the latest layer. Switch that once.
+    // A later change in Preferences is kept. Leave the config dirty so the
+    // switch is written with the next save.
+    if (get("seq_top_layer_only_whole_gcode").empty()) {
+        set("seq_top_layer_only", "0");
+        set("seq_top_layer_only_whole_gcode", "1");
+    }
+    else
+        m_dirty = false;
     return "";
 }
 

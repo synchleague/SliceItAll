@@ -35,6 +35,7 @@
 #include <boost/log/trivial.hpp>
 
 #include "libslic3r/Model.hpp"
+#include "libslic3r/MultipleBeds.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/SLAPrint.hpp"
@@ -589,6 +590,7 @@ void MainFrame::park_live_project()
     if (live < 0 || !m_plater)
         return;
     ProjectSlot& slot = m_project_tabs->slots[live];
+    s_multiple_beds.capture_bed_locks(m_plater->model());
     slot.parked = m_plater->model();
     slot.filename = m_plater->get_project_filename(".3mf");
     slot.dirty = m_plater->is_project_dirty();

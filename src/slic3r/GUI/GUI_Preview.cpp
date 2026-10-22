@@ -856,7 +856,11 @@ void Preview::update_moves_slider(std::optional<int> visible_range_min, std::opt
     if (active_gcode_result()->moves.empty())
         return;
 
-    const libvgcode::Interval& range = m_canvas->get_gcode_view_enabled_range();
+    // The bottom slider walks every move in the selected layers. The enabled
+    // range is only the top layer when "sequential slider applied only to top
+    // layer" is on, which made the bar skim the end of the gcode.
+    const bool top_layer_only = get_app_config()->get("seq_top_layer_only") == "1";
+    const libvgcode::Interval& range = top_layer_only ? m_canvas->get_gcode_view_enabled_range() : m_canvas->get_gcode_view_full_range();
     uint32_t last_gcode_id = m_canvas->get_gcode_vertex_at(range[0]).gcode_id;
     std::optional<uint32_t> gcode_id_min = visible_range_min.has_value() ?
         std::optional<uint32_t>{ m_canvas->get_gcode_vertex_at(*visible_range_min).gcode_id } : std::nullopt;
