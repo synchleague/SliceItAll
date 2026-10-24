@@ -3828,15 +3828,12 @@ void GUI_App::app_updater(bool from_user)
     if (dialog_result != wxID_OK) {
         return;
     }
-    if (app_data.action == AppUpdaterURLAction::AUUA_OPEN_IN_BROWSER) {
-        open_browser_with_warning_dialog(from_u8(app_data.url), nullptr, false);
-        return;
-    }
-    // The user already accepted the update. Download the installer and start it.
-    this->plater_->get_notification_manager()->push_download_progress_notification(GUI::format(_L("Downloading %1%"), app_data.target_path.filename().string()), std::bind(&AppUpdater::cancel_callback, this->m_app_updater.get()));
-    app_data.start_after = true;
-    m_app_updater->set_app_data(std::move(app_data));
-    m_app_updater->sync_download();
+    // The in-app download does not install the update. Open the release page instead.
+    std::string url = app_data.url;
+    if (app_data.action != AppUpdaterURLAction::AUUA_OPEN_IN_BROWSER
+        || url.find("github.com/synchleague/SliceItAll/releases") == std::string::npos)
+        url = "https://github.com/synchleague/SliceItAll/releases";
+    wxLaunchDefaultBrowser(from_u8(url));
 }
 
 void GUI_App::app_version_check(bool from_user)

@@ -3011,9 +3011,48 @@ void GCodeGenerator::append_full_config(const Print& print, std::string &str)
     }
 }
 
+static bool hex_digit(char c)
+{
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+// Anycubic's file check treats every comment key containing "color" or "colour"
+// as a #RRGGBB value. A short value such as the empty extruder color "" makes
+// that check fail and the Kobra S1 reports that it cannot parse the file.
+static bool kobra_color_token(const std::string& token)
+{
+    if (token.size() != 7 || token.front() != '#')
+        return false;
+    for (size_t i = 1; i < token.size(); ++i)
+        if (!hex_digit(token[i]))
+            return false;
+    return true;
+}
+
+static std::string kobra_safe_color_value(const std::string& value)
+{
+    std::string out;
+    size_t begin = 0;
+    while (begin <= value.size()) {
+        const size_t end = value.find(';', begin);
+        const std::string token = value.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
+        if (kobra_color_token(token)) {
+            if (!out.empty())
+                out.push_back(';');
+            out += token;
+        }
+        if (end == std::string::npos)
+            break;
+        begin = end + 1;
+    }
+    return out;
+}
+
 void GCodeGenerator::encode_full_config(const Print& print, std::vector<std::pair<std::string, std::string>>& config)
 {
     const DynamicPrintConfig& cfg = print.full_print_config();
+    const bool kobra_s1 = print.config().printer_model.value == "KOBRAS1"
+        || print.config().printer_notes.value.find("PRINTER_MODEL_KOBRA_S1") != std::string::npos;
     // Sorted list of config keys, which shall not be stored into the G-code. Initializer list.
     static constexpr auto banned_keys = {
         "compatible_printers"sv,
@@ -3029,8 +3068,19 @@ void GCodeGenerator::encode_full_config(const Print& print, std::vector<std::pai
     };
     config.reserve(config.size() + cfg.keys().size());
     for (const std::string& key : cfg.keys()) {
-        if (!is_banned(key))
-            config.emplace_back(key, cfg.opt_serialize(key));
+        if (is_banned(key))
+            continue;
+        std::string value = cfg.opt_serialize(key);
+        if (kobra_s1 && (key.find("color") != std::string::npos || key.find("colour") != std::string::npos)) {
+            value = kobra_safe_color_value(value);
+            const bool colour_setting = key == "filament_colour" || key == "extruder_colour" || key == "material_colour";
+            if (value.empty()) {
+                if (!colour_setting)
+                    continue;
+                value = "#8C8C8C";
+            }
+        }
+        config.emplace_back(key, std::move(value));
     }
     config.shrink_to_fit();
 }

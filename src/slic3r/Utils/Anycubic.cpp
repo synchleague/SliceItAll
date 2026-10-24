@@ -520,13 +520,26 @@ bool ends_with_gcode(const std::string& name)
 }
 
 // The printer answers "Invalid gcode file" unless the stored name ends in .gcode.
+// A character such as '=' in the name makes the Kobra S1 report that it cannot parse the file.
 std::string printer_gcode_name(std::string name)
 {
-    if (name.empty())
-        name = "print";
-    if (!ends_with_gcode(name))
-        name += ".gcode";
-    return name;
+    const auto slash = name.find_last_of("/\\");
+    if (slash != std::string::npos)
+        name = name.substr(slash + 1);
+    if (ends_with_gcode(name))
+        name.resize(name.size() - 6);
+    std::string safe;
+    safe.reserve(name.size());
+    for (unsigned char c : name) {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+            || c == '.' || c == '_' || c == '-' || c == '(' || c == ')' || c == ' ';
+        safe.push_back(ok ? char(c) : '_');
+    }
+    while (!safe.empty() && (safe.back() == ' ' || safe.back() == '.' || safe.back() == '_'))
+        safe.pop_back();
+    if (safe.empty())
+        safe = "print";
+    return safe + ".gcode";
 }
 
 std::string file_md5(const fs::path& path)

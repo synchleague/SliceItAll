@@ -99,8 +99,8 @@ bool MsgUpdateSlic3r::disable_version_check() const
 
  wxSize AppUpdateAvailableDialog::AUAD_size;
 // AppUpdater
-AppUpdateAvailableDialog::AppUpdateAvailableDialog(const Semver& ver_current, const Semver& ver_online, bool from_user, bool browser_on_next)
-	: MsgDialog(nullptr, _(L("App Update available")), wxString::Format(_(L("New version of %s is available.\nDo you wish to download it?")), SLIC3R_APP_NAME))
+AppUpdateAvailableDialog::AppUpdateAvailableDialog(const Semver& ver_current, const Semver& ver_online, bool from_user, bool /*browser_on_next*/)
+	: MsgDialog(nullptr, _(L("App Update available")), wxString::Format(_(L("New version of %s is available.")), SLIC3R_APP_NAME))
 {
 	auto* versions = new wxFlexGridSizer(1, 0, VERT_SPACING);
 	versions->Add(new wxStaticText(this, wxID_ANY, _(L("Current version:"))));
@@ -116,16 +116,8 @@ AppUpdateAvailableDialog::AppUpdateAvailableDialog(const Semver& ver_current, co
 	}
 	content_sizer->AddSpacer(VERT_SPACING);
 	
-    if (browser_on_next)
-    {
-        content_sizer->Add(new wxStaticText(this, wxID_ANY, _L("Clicking \'Next\' will open the GitHub release page.")));
-        content_sizer->AddSpacer(VERT_SPACING);
-    }
-    else
-    {
-        content_sizer->Add(new wxStaticText(this, wxID_ANY, _L("The installer will download and start. Windows will ask for permission to install it.")));
-        content_sizer->AddSpacer(VERT_SPACING);
-    }
+    content_sizer->Add(new wxStaticText(this, wxID_ANY, _L("This opens the release on GitHub, where you can download the installer.")));
+    content_sizer->AddSpacer(VERT_SPACING);
 
 	AUAD_size = content_sizer->GetSize();
 	
@@ -133,7 +125,7 @@ AppUpdateAvailableDialog::AppUpdateAvailableDialog(const Semver& ver_current, co
 	add_button(wxID_CANCEL);
 
 	if (auto* btn_ok = get_button(wxID_OK); btn_ok != NULL) {
-		btn_ok->SetLabel(browser_on_next ? _L("Next") : _L("Download and install"));
+		btn_ok->SetLabel(_L("Open release page"));
 	}
 
 	finalize();

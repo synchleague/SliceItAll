@@ -2373,7 +2373,9 @@ bool remap_gcode_tools(const std::string& path, const std::vector<int>& slot_for
         cursor = end < data.size() ? end + 1 : data.size();
     }
 
-    if (!found_toolchange && !slot_for_tool.empty() && slot_for_tool.front() > 0) {
+    // Slot 1 is T0. Leaving that command out makes the Kobra S1 parse the file as a
+    // single-color job and reject it. Later slots already got Tn, which is why slot 4 worked.
+    if (!found_toolchange && !slot_for_tool.empty() && slot_for_tool.front() >= 0) {
         const std::string insert = "T" + std::to_string(slot_for_tool.front()) + " ; multi-color slot" + newline;
         // A tool change at the top of the file is an extrusion. The Kobra S1 then
         // reports 10539 because the nozzle heat command has not been seen yet.

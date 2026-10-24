@@ -399,47 +399,12 @@ void AppUpdater::priv::parse_github_release(const std::string& body)
 			return;
 		}
 
-		std::string asset_url;
-		std::string asset_name;
-		size_t asset_size = 0;
-		if (const auto assets = tree.get_child_optional("assets")) {
-			for (const auto& asset : *assets) {
-				const std::string name = asset.second.get<std::string>("name", "");
-				const std::string download = asset.second.get<std::string>("browser_download_url", "");
-#ifdef _WIN32
-				const bool installer = name.size() > 4
-					&& name.compare(name.size() - 4, 4, ".exe") == 0
-					&& name.find("win64-setup") != std::string::npos;
-#else
-				const bool installer = false;
-#endif
-				if (!installer || download.empty())
-					continue;
-				try {
-					asset_size = std::stoull(asset.second.get<std::string>("size", "0"));
-				} catch (const std::exception&) {
-					asset_size = 0;
-				}
-				if (asset_size == 0)
-					continue;
-				asset_url = download;
-				asset_name = name;
-				break;
-			}
-		}
-
 		DownloadAppData new_data;
 		new_data.version = release_version;
-		if (!asset_url.empty()) {
-			new_data.url = std::move(asset_url);
-			new_data.size = asset_size;
-			new_data.action = AppUpdaterURLAction::AUUA_DOWNLOAD;
-			new_data.target_path = m_default_dest_folder / asset_name;
-		} else {
-			new_data.url = url;
-			new_data.action = AppUpdaterURLAction::AUUA_OPEN_IN_BROWSER;
-			new_data.target_path = m_default_dest_folder / "SliceItAll";
-		}
+		// Open the release page. The in-app installer download does not start reliably.
+		new_data.url = url;
+		new_data.action = AppUpdaterURLAction::AUUA_OPEN_IN_BROWSER;
+		new_data.target_path = m_default_dest_folder / "SliceItAll";
 		set_app_data(new_data);
 
 		BOOST_LOG_TRIVIAL(info) << format("Got %1% online version: `%2%`. Sending to GUI thread...", SLIC3R_APP_NAME, release_version->to_string());

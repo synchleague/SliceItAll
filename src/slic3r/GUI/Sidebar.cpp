@@ -1593,7 +1593,18 @@ void Sidebar::build_process_panel()
     m_process_pages_sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(m_process_pages_sizer, 0, wxEXPAND);
 
-    auto add_page = [this](const std::vector<std::pair<std::string, wxString>>& options, const std::string& plugin_slot = {}) {
+    // A field with an empty label keeps the preset name. Advanced and Expert
+    // fields stay hidden until the app is in that mode.
+    struct ProcessOpt {
+        std::string key;
+        wxString label;
+        ConfigOptionMode mode { comSimple };
+    };
+    struct ProcessSection {
+        wxString title;
+        std::vector<ProcessOpt> options;
+    };
+    auto add_page = [this](const std::vector<ProcessSection>& sections, const std::string& plugin_slot = {}) {
         auto* page = new wxPanel(m_process_panel);
 #ifdef _WIN32
         wxGetApp().UpdateDarkUI(page);
@@ -1614,84 +1625,235 @@ void Sidebar::build_process_panel()
             }
         }
 
-        auto group = std::make_shared<ConfigOptionsGroup>(page, "");
-        group->set_config(&wxGetApp().preset_bundle->prints.get_edited_preset().config);
-        group->label_width = 12;
-        group->on_change = [this](const t_config_option_key& opt_id, const boost::any&) {
-            on_process_option(opt_id);
-        };
-        for (const auto& spec : options) {
-            Option option = group->get_option(spec.first);
-            if (!spec.second.empty())
-                option.opt.label = into_u8(spec.second);
-            option.opt.mode = comSimple;
-            option.opt.full_width = true;
-            group->append_single_option_line(option);
+        for (const ProcessSection& section : sections) {
+            auto group = std::make_shared<ConfigOptionsGroup>(page, section.title);
+            group->set_config(&wxGetApp().preset_bundle->prints.get_edited_preset().config);
+            group->label_width = 12;
+            group->on_change = [this](const t_config_option_key& opt_id, const boost::any&) {
+                on_process_option(opt_id);
+            };
+            for (const ProcessOpt& spec : section.options) {
+                Option option = group->get_option(spec.key);
+                if (!spec.label.empty())
+                    option.opt.label = into_u8(spec.label);
+                option.opt.mode = spec.mode;
+                option.opt.full_width = true;
+                group->append_single_option_line(option);
+            }
+            group->activate();
+            page_sizer->Add(group->sizer, 0, wxEXPAND | wxTOP, section.title.empty() ? 0 : int(0.6 * wxGetApp().em_unit()));
+            m_process_groups.push_back(std::move(group));
         }
-        group->activate();
-        page_sizer->Add(group->sizer, 0, wxEXPAND);
         page->SetSizer(page_sizer);
         m_process_pages_sizer->Add(page, 0, wxEXPAND);
         m_process_pages.push_back(page);
-        m_process_groups.push_back(std::move(group));
     };
 
     add_page({
-        { "layer_height", L("Layer height") },
-        { "first_layer_height", L("First layer height") },
-        { "perimeters", L("Wall loops") },
-        { "top_solid_layers", L("Top shell layers") },
-        { "bottom_solid_layers", L("Bottom shell layers") },
-        { "seam_position", L("Seam position") }
+        { "", {
+            { "layer_height", L("Layer height") },
+            { "first_layer_height", L("First layer height") },
+            { "perimeters", L("Wall loops") },
+            { "top_solid_layers", L("Top shell layers") },
+            { "bottom_solid_layers", L("Bottom shell layers") },
+            { "seam_position", L("Seam position") }
+        }},
+        { L("Walls"), {
+            { "spiral_vase", L("Spiral vase"), comAdvanced },
+            { "extra_perimeters", L("Extra walls"), comAdvanced },
+            { "extra_perimeters_on_overhangs", L("Extra walls on overhangs"), comAdvanced },
+            { "thin_walls", L("Thin walls"), comAdvanced },
+            { "overhangs", L("Detect bridging"), comAdvanced },
+            { "thick_bridges", L("Thick bridges"), comAdvanced },
+            { "external_perimeters_first", L("Outer wall first"), comAdvanced },
+            { "gap_fill_enabled", L("Fill gaps"), comAdvanced },
+            { "top_solid_min_thickness", L("Min top thickness"), comAdvanced },
+            { "bottom_solid_min_thickness", L("Min bottom thickness"), comAdvanced },
+            { "ensure_vertical_shell_thickness", L("Vertical shell thickness"), comAdvanced }
+        }},
+        { L("Seams"), {
+            { "seam_gap_distance", L("Seam gap"), comExpert },
+            { "staggered_inner_seams", L("Stagger inner seams"), comExpert },
+            { "scarf_seam_placement", L("Scarf seam"), comExpert },
+            { "avoid_crossing_perimeters", L("Avoid crossing walls"), comExpert },
+            { "avoid_crossing_perimeters_max_detour", L("Max detour"), comExpert },
+            { "avoid_crossing_curled_overhangs", L("Avoid curled overhangs"), comExpert },
+            { "perimeter_generator", L("Perimeter generator"), comExpert },
+            { "top_one_perimeter_type", L("One top perimeter"), comExpert },
+            { "only_one_perimeter_first_layer", L("One perimeter on first layer"), comExpert },
+            { "elefant_foot_compensation", L("Elephant foot"), comExpert },
+            { "xy_size_compensation", L("XY compensation"), comExpert }
+        }},
+        { L("Line width"), {
+            { "extrusion_width", L("Default width"), comExpert },
+            { "first_layer_extrusion_width", L("First layer width"), comExpert },
+            { "perimeter_extrusion_width", L("Wall width"), comExpert },
+            { "external_perimeter_extrusion_width", L("Outer wall width"), comExpert },
+            { "infill_extrusion_width", L("Infill width"), comExpert },
+            { "solid_infill_extrusion_width", L("Solid infill width"), comExpert },
+            { "top_infill_extrusion_width", L("Top infill width"), comExpert }
+        }}
     });
     add_page({
-        { "fill_density", L("Sparse infill density") },
-        { "fill_pattern", L("Sparse infill pattern") },
-        { "top_fill_pattern", L("Top fill pattern") },
-        { "bottom_fill_pattern", L("Bottom fill pattern") },
-        { "infill_every_layers", L("Infill combination") },
-        { "solid_infill_every_layers", L("Solid infill every") }
+        { "", {
+            { "fill_density", L("Sparse infill density") },
+            { "fill_pattern", L("Sparse infill pattern") },
+            { "top_fill_pattern", L("Top fill pattern") },
+            { "bottom_fill_pattern", L("Bottom fill pattern") },
+            { "infill_every_layers", L("Infill combination") },
+            { "solid_infill_every_layers", L("Solid infill every") }
+        }},
+        { L("Infill"), {
+            { "fill_angle", L("Fill angle"), comAdvanced },
+            { "infill_anchor", L("Infill anchor"), comAdvanced },
+            { "infill_anchor_max", L("Infill anchor max"), comAdvanced },
+            { "solid_infill_below_area", L("Solid infill threshold"), comAdvanced },
+            { "infill_overlap", L("Infill overlap"), comAdvanced },
+            { "bridge_angle", L("Bridge angle"), comAdvanced },
+            { "bridge_flow_ratio", L("Bridge flow"), comAdvanced },
+            { "automatic_infill_combination", L("Combine infill"), comExpert },
+            { "automatic_infill_combination_max_layer_height", L("Combine infill max height"), comExpert },
+            { "infill_first", L("Infill first"), comExpert },
+            { "only_retract_when_crossing_perimeters", L("Retract when crossing walls"), comExpert }
+        }}
     });
     add_page({
-        { "perimeter_speed", L("Wall speed") },
-        { "external_perimeter_speed", L("Outer wall") },
-        { "infill_speed", L("Sparse infill") },
-        { "solid_infill_speed", L("Solid infill") },
-        { "travel_speed", L("Travel") },
-        { "first_layer_speed", L("First layer") }
+        { "", {
+            { "perimeter_speed", L("Wall speed") },
+            { "external_perimeter_speed", L("Outer wall") },
+            { "infill_speed", L("Sparse infill") },
+            { "solid_infill_speed", L("Solid infill") },
+            { "travel_speed", L("Travel") },
+            { "first_layer_speed", L("First layer") }
+        }},
+        { L("More speeds"), {
+            { "small_perimeter_speed", L("Small walls"), comAdvanced },
+            { "top_solid_infill_speed", L("Top solid infill"), comAdvanced },
+            { "support_material_speed", L("Support"), comAdvanced },
+            { "support_material_interface_speed", L("Support interface"), comAdvanced },
+            { "bridge_speed", L("Bridges"), comAdvanced },
+            { "over_bridge_speed", L("Over bridges"), comAdvanced },
+            { "gap_fill_speed", L("Gap fill"), comAdvanced },
+            { "ironing_speed", L("Ironing"), comAdvanced },
+            { "first_layer_infill_speed", L("First layer infill"), comAdvanced },
+            { "first_layer_speed_over_raft", L("First layer over raft"), comAdvanced },
+            { "travel_speed_z", L("Z travel"), comAdvanced }
+        }},
+        { L("Overhangs"), {
+            { "enable_dynamic_overhang_speeds", L("Dynamic overhang speed"), comExpert },
+            { "overhang_speed_0", L("0% overlap"), comExpert },
+            { "overhang_speed_1", L("25% overlap"), comExpert },
+            { "overhang_speed_2", L("50% overlap"), comExpert },
+            { "overhang_speed_3", L("75% overlap"), comExpert }
+        }},
+        { L("Acceleration"), {
+            { "default_acceleration", L("Default"), comExpert },
+            { "perimeter_acceleration", L("Walls"), comExpert },
+            { "external_perimeter_acceleration", L("Outer wall"), comExpert },
+            { "infill_acceleration", L("Sparse infill"), comExpert },
+            { "solid_infill_acceleration", L("Solid infill"), comExpert },
+            { "top_solid_infill_acceleration", L("Top solid infill"), comExpert },
+            { "bridge_acceleration", L("Bridges"), comExpert },
+            { "first_layer_acceleration", L("First layer"), comExpert },
+            { "travel_acceleration", L("Travel"), comExpert }
+        }},
+        { L("Flow limit"), {
+            { "max_volumetric_speed", L("Max volumetric speed"), comExpert }
+        }}
     });
     add_page({
-        { "support_material", L("Enable support") },
-        { "support_material_auto", L("Automatic supports") },
-        { "support_material_style", L("Type") },
-        { "support_material_threshold", L("Threshold angle") },
-        { "raft_first_layer_density", L("First layer density") },
-        { "raft_first_layer_expansion", L("First layer expansion") },
-        { "support_material_buildplate_only", L("On build plate only") },
-        { "dont_support_bridges", L("Don't support bridges") },
-        { "raft_layers", L("Raft layers") },
-        { "support_material_extruder", L("Support/raft base") },
-        { "support_material_interface_extruder", L("Support/raft interface") },
-        { "support_material_contact_distance", L("Top Z distance") },
-        { "support_material_bottom_contact_distance", L("Bottom Z distance") },
-        { "support_material_pattern", L("Base pattern") },
-        { "support_material_spacing", L("Base pattern spacing") },
-        { "support_material_angle", L("Pattern angle") }
+        { "", {
+            { "slice_bed_as_one_object", L("Treat build plate as one object") },
+            { "support_material", L("Enable support") },
+            { "support_material_auto", L("Automatic supports") },
+            { "support_material_style", L("Type") },
+            { "support_material_threshold", L("Threshold angle") },
+            { "raft_first_layer_density", L("First layer density") },
+            { "raft_first_layer_expansion", L("First layer expansion") },
+            { "support_material_buildplate_only", L("On build plate only") },
+            { "dont_support_bridges", L("Don't support bridges") },
+            { "raft_layers", L("Raft layers") },
+            { "support_material_extruder", L("Support/raft base") },
+            { "support_material_interface_extruder", L("Support/raft interface") },
+            { "support_material_contact_distance", L("Top Z distance") },
+            { "support_material_bottom_contact_distance", L("Bottom Z distance") },
+            { "support_material_pattern", L("Base pattern") },
+            { "support_material_spacing", L("Base pattern spacing") },
+            { "support_material_angle", L("Pattern angle") }
+        }},
+        { L("More support"), {
+            { "support_material_enforce_layers", L("Enforce first layers"), comAdvanced },
+            { "raft_contact_distance", L("Raft contact distance"), comAdvanced },
+            { "raft_expansion", L("Raft expansion"), comAdvanced },
+            { "support_material_xy_spacing", L("XY separation"), comAdvanced },
+            { "support_material_interface_layers", L("Top interface layers"), comAdvanced },
+            { "support_material_bottom_interface_layers", L("Bottom interface layers"), comAdvanced },
+            { "support_material_interface_pattern", L("Interface pattern"), comAdvanced },
+            { "support_material_interface_spacing", L("Interface spacing"), comAdvanced },
+            { "support_material_interface_contact_loops", L("Interface loops"), comAdvanced },
+            { "support_material_with_sheath", L("Sheath around support"), comAdvanced },
+            { "support_material_closing_radius", L("Closing radius"), comAdvanced },
+            { "support_material_synchronize_layers", L("Synchronize layers"), comAdvanced }
+        }},
+        { L("Organic supports"), {
+            { "support_tree_angle", L("Branch angle"), comExpert },
+            { "support_tree_angle_slow", L("Slow branch angle"), comExpert },
+            { "support_tree_branch_diameter", L("Branch diameter"), comExpert },
+            { "support_tree_tip_diameter", L("Tip diameter"), comExpert },
+            { "support_tree_branch_distance", L("Branch distance"), comExpert },
+            { "support_tree_top_rate", L("Top rate"), comExpert }
+        }}
     }, "supports");
     add_page({
-        { "wipe_tower", L("Prime tower") },
-        { "wipe_tower_width", L("Prime tower width") },
-        { "interface_shells", L("Interface shells") },
-        { "ooze_prevention", L("Ooze prevention") }
+        { "", {
+            { "wipe_tower", L("Prime tower") },
+            { "wipe_tower_width", L("Prime tower width") },
+            { "interface_shells", L("Interface shells") },
+            { "ooze_prevention", L("Ooze prevention") }
+        }},
+        { L("Extruders"), {
+            { "perimeter_extruder", L("Walls"), comAdvanced },
+            { "infill_extruder", L("Infill"), comAdvanced },
+            { "solid_infill_extruder", L("Solid infill"), comAdvanced },
+            { "wipe_tower_extruder", L("Prime tower"), comAdvanced },
+            { "standby_temperature_delta", L("Standby temperature"), comAdvanced }
+        }},
+        { L("Prime tower"), {
+            { "wipe_tower_brim_width", L("Brim width"), comAdvanced },
+            { "wipe_tower_cone_angle", L("Cone angle"), comAdvanced },
+            { "wipe_tower_extra_spacing", L("Extra spacing"), comAdvanced },
+            { "wipe_tower_extra_flow", L("Extra flow"), comAdvanced },
+            { "wipe_tower_bridging", L("Bridging"), comAdvanced },
+            { "wipe_tower_no_sparse_layers", L("No sparse layers"), comExpert }
+        }},
+        { L("Interlocking"), {
+            { "mmu_segmented_region_max_width", L("Segmented region width"), comExpert },
+            { "mmu_segmented_region_interlocking_depth", L("Segmented interlocking depth"), comExpert },
+            { "interlocking_beam", L("Interlocking beam"), comExpert },
+            { "interlocking_depth", L("Interlocking depth"), comExpert }
+        }}
     });
     add_page({
-        { "brim_type", L("Brim type") },
-        { "brim_width", L("Brim width") },
-        { "brim_separation", L("Brim separation") },
-        { "skirts", L("Skirt loops") },
-        { "skirt_distance", L("Skirt distance") },
-        { "ironing", L("Ironing") },
-        { "fuzzy_skin", L("Fuzzy skin") }
+        { "", {
+            { "brim_type", L("Brim type") },
+            { "brim_width", L("Brim width") },
+            { "brim_separation", L("Brim separation") },
+            { "skirts", L("Skirt loops") },
+            { "skirt_distance", L("Skirt distance") },
+            { "ironing", L("Ironing") },
+            { "fuzzy_skin", L("Fuzzy skin") }
+        }},
+        { L("Skirt, ironing, and surface"), {
+            { "skirt_height", L("Skirt height"), comAdvanced },
+            { "draft_shield", L("Draft shield"), comAdvanced },
+            { "min_skirt_length", L("Min skirt length"), comAdvanced },
+            { "ironing_type", L("Ironing type"), comAdvanced },
+            { "ironing_flowrate", L("Ironing flow"), comAdvanced },
+            { "ironing_spacing", L("Ironing spacing"), comAdvanced },
+            { "fuzzy_skin_thickness", L("Fuzzy skin thickness"), comAdvanced },
+            { "fuzzy_skin_point_dist", L("Fuzzy skin point distance"), comAdvanced },
+            { "complete_objects", L("Complete individual objects"), comExpert }
+        }}
     }, "surface");
 
     auto add_sla_page = [this](Preset::Type type, const std::vector<std::pair<std::string, wxString>>& options) {
@@ -3408,6 +3570,15 @@ void Sidebar::update_mode()
         m_object_manipulation->set_coordinates_type(ECoordinatesType::World);
 
     m_object_list->get_sizer()->Show(m_mode > comSimple);
+
+    for (const std::shared_ptr<ConfigOptionsGroup>& group : m_process_groups)
+        if (group)
+            group->update_visibility(m_mode);
+    for (const std::shared_ptr<ConfigOptionsGroup>& group : m_sla_groups)
+        if (group)
+            group->update_visibility(m_mode);
+    if (m_process_panel)
+        m_process_panel->Layout();
 
     m_object_list->unselect_objects();
     m_object_list->update_selections();
