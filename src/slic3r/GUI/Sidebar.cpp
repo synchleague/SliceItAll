@@ -1537,6 +1537,64 @@ void Sidebar::undock_models()
     refresh_layout_buttons();
 }
 
+void Sidebar::fit_process_controls()
+{
+    if (m_process_fitting || !m_process_panel)
+        return;
+    const int em = std::max(1, wxGetApp().em_unit());
+    // The scrolled window's client size is the visible sidebar. The process
+    // panel's own size grows when a child minimum is too wide, so it cannot
+    // be used to measure the pane.
+    const int visible = m_scrolled_panel
+        ? m_scrolled_panel->GetClientSize().GetWidth()
+        : m_process_panel->GetClientSize().GetWidth();
+    if (visible < 40)
+        return;
+
+    const int margin = int(0.5 * em);
+    const int inner = std::max(40, visible - margin - 4);
+    const int label_px = 12 * em;
+    const int field_w = std::max(2 * em, inner - label_px - 4 * em);
+
+    m_process_fitting = true;
+    m_process_field_width = inner;
+    auto pin = [](wxWindow* win, int width) {
+        if (!win)
+            return;
+        win->SetMinSize(wxSize(0, -1));
+        win->SetMaxSize(wxSize(width, -1));
+        win->InvalidateBestSize();
+    };
+    pin(m_process_panel, inner);
+    for (wxPanel* page : m_process_pages)
+        pin(page, inner);
+    for (wxPanel* page : m_sla_pages)
+        pin(page, inner);
+
+    if (m_process_hint) {
+        const int wrap = std::max(8 * em, inner - 4);
+        m_process_hint->SetMinSize(wxSize(0, -1));
+        m_process_hint->SetMaxSize(wxSize(wrap, -1));
+        // Wrap() inserts newlines into the current label, so start from the original.
+        m_process_hint->SetLabel(m_process_hint_text);
+        m_process_hint->Wrap(wrap);
+    }
+
+    for (const std::shared_ptr<ConfigOptionsGroup>& group : m_process_groups)
+        if (group)
+            group->constrain_field_widths(field_w);
+    for (const std::shared_ptr<ConfigOptionsGroup>& group : m_sla_groups)
+        if (group)
+            group->constrain_field_widths(field_w);
+
+    m_process_panel->Layout();
+    if (m_scrolled_panel) {
+        m_scrolled_panel->Layout();
+        m_scrolled_panel->FitInside();
+    }
+    m_process_fitting = false;
+}
+
 void Sidebar::build_process_panel()
 {
     const int gap = int(0.4 * wxGetApp().em_unit());
@@ -1552,31 +1610,13 @@ void Sidebar::build_process_panel()
     });
     sizer->Add(m_process_scope, 0, wxEXPAND | wxBOTTOM, gap);
 
-    m_process_hint = new wxStaticText(m_process_panel, wxID_ANY, _L("Select one object to change its process settings."));
+    m_process_hint_text = _L("Select one object to change its process settings.");
+    m_process_hint = new wxStaticText(m_process_panel, wxID_ANY, m_process_hint_text);
     m_process_hint->Hide();
     sizer->Add(m_process_hint, 0, wxEXPAND | wxBOTTOM, gap);
     m_process_panel->Bind(wxEVT_SIZE, [this](wxSizeEvent& event) {
         event.Skip();
-        const int em = std::max(1, wxGetApp().em_unit());
-        const int avail = m_process_panel->GetClientSize().GetWidth();
-        if (avail < 40)
-            return;
-        if (m_process_hint) {
-            const int wrap = std::max(8 * em, avail - 4);
-            m_process_hint->SetMaxSize(wxSize(wrap, -1));
-            m_process_hint->Wrap(wrap);
-        }
-        const int field_w = std::max(6 * em, avail - 13 * em);
-        if (field_w == m_process_field_width)
-            return;
-        m_process_field_width = field_w;
-        for (const std::shared_ptr<ConfigOptionsGroup>& group : m_process_groups)
-            if (group)
-                group->constrain_field_widths(field_w);
-        for (const std::shared_ptr<ConfigOptionsGroup>& group : m_sla_groups)
-            if (group)
-                group->constrain_field_widths(field_w);
-        m_process_panel->Layout();
+        fit_process_controls();
     });
 
     m_process_tabs = new ProcessTabBar(m_process_panel, {
@@ -2135,8 +2175,9 @@ void Sidebar::reload_process_settings()
 
     if (m_process_objects)
         m_process_object_idx = selected_object_idx();
-    if (m_process_panel)
-        m_process_panel->Layout();
+    // Value changes can resize an editor to its text. Measure the pane again.
+    m_process_field_width = 0;
+    fit_process_controls();
 }
 
 void Sidebar::on_process_option(const std::string& opt_id)

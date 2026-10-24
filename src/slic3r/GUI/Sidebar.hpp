@@ -133,6 +133,8 @@ class Sidebar : public wxPanel
     std::vector<wxPanel*>               m_process_pages;
     std::vector<wxPanel*>               m_sla_pages;
     int m_process_field_width { 0 };
+    bool m_process_fitting { false };
+    wxString m_process_hint_text;
     std::vector<std::shared_ptr<ConfigOptionsGroup>> m_process_groups;
     std::vector<std::shared_ptr<ConfigOptionsGroup>> m_sla_groups;
     std::unique_ptr<DynamicPrintConfig> m_process_global;
@@ -164,6 +166,7 @@ class Sidebar : public wxPanel
     void init_filament_combo(PlaterPresetComboBox **combo, int extr_idx);
     void build_filament_header();
     void build_process_panel();
+    void fit_process_controls();
     void on_process_option(const std::string& opt_id);
     void on_sla_option(Preset::Type type, const std::string& opt_id);
     void set_process_category(int index);

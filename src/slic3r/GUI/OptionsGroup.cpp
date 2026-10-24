@@ -16,9 +16,11 @@
 #include "OG_CustomCtrl.hpp"
 #include "format.hpp"
 
+#include <algorithm>
 #include <utility>
 #include <wx/bookctrl.h> // IWYU pragma: keep
 #include <wx/numformatter.h>
+#include <wx/textctrl.h>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/classification.hpp>
@@ -347,15 +349,55 @@ void OptionsGroup::constrain_field_widths(int width_px)
 {
     if (width_px < 1)
         return;
-    for (auto& field : m_fields) {
-        if (!field.second || dynamic_cast<CheckBox*>(field.second.get()))
-            continue;
-        wxWindow* win = field.second->getWindow();
+    const int em = std::max(1, wxGetApp().em_unit());
+    const int label_px = label_width > 0 ? label_width * em : 0;
+    // A label's best size is the whole string. Pin the column so a long name
+    // cannot push the editor past the sidebar.
+    if (label_px > 0 && m_grid_sizer) {
+        for (wxSizerItem* item : m_grid_sizer->GetChildren()) {
+            if (!item->IsWindow())
+                continue;
+            if (auto* text = dynamic_cast<wxStaticText*>(item->GetWindow())) {
+                text->SetMinSize(wxSize(label_px, -1));
+                text->SetMaxSize(wxSize(label_px, -1));
+            }
+        }
+    }
+
+    const int floor_px = std::min(width_px, 4 * em);
+    // Min width is a floor, never the current pane width. Using the pane width
+    // as a minimum makes the next layout wider, and the next one wider again.
+    auto clamp = [&](wxWindow* win, int min_w, int max_w) {
         if (!win)
+            return;
+        max_w = std::max(1, max_w);
+        min_w = std::max(1, std::min(min_w, max_w));
+        win->SetMinSize(wxSize(min_w, -1));
+        win->SetMaxSize(wxSize(max_w, -1));
+    };
+    for (auto& field : m_fields) {
+        if (!field.second)
             continue;
-        const int height = win->GetSize().GetHeight();
-        win->SetMinSize(wxSize(width_px, height > 0 ? height : -1));
-        win->SetMaxSize(wxSize(width_px, -1));
+        if (dynamic_cast<CheckBox*>(field.second.get())) {
+            if (wxWindow* win = field.second->getWindow()) {
+                win->SetMinSize(wxDefaultSize);
+                win->SetMaxSize(wxSize(width_px, -1));
+            }
+            continue;
+        }
+        if (wxWindow* win = field.second->getWindow())
+            clamp(win, floor_px, width_px);
+        if (wxSizer* field_sizer = field.second->getSizer()) {
+            for (wxSizerItem* child : field_sizer->GetChildren()) {
+                if (!child->IsWindow())
+                    continue;
+                wxWindow* child_win = child->GetWindow();
+                if (dynamic_cast<wxTextCtrl*>(child_win))
+                    clamp(child_win, std::min(floor_px, width_px), std::min(4 * em, width_px));
+                else
+                    clamp(child_win, std::min(2 * em, width_px), width_px);
+            }
+        }
     }
 }
 
@@ -524,6 +566,7 @@ void OptionsGroup::activate_line(Line& line)
                 label->SetBackgroundStyle(wxBG_STYLE_PAINT);
                 label->SetFont(wxGetApp().normal_font());
                 // Best size is the unwrapped string, which pushes the editor past the pane.
+                label->SetMinSize(wxSize(label_px, -1));
                 label->SetMaxSize(wxSize(label_px, -1));
                 label->Wrap(label_px); // avoid a Linux/GTK bug
             }

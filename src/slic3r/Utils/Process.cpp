@@ -53,6 +53,8 @@ static void start_new_slicer_or_gcodeviewer(const NewSlicerInstanceType instance
 	}
 	if (instance_type == NewSlicerInstanceType::Slicer && single_instance)
 		args.emplace_back(L"--single-instance");
+	else if (instance_type == NewSlicerInstanceType::Slicer && !paths_to_open.empty())
+		args.emplace_back(L"--no-single-instance");
 	if(delete_after_load && !paths_to_open.empty())
 		args.emplace_back(L"--delete-after-load=1");
 
@@ -84,6 +86,8 @@ static void start_new_slicer_or_gcodeviewer(const NewSlicerInstanceType instance
 			}
 			if (instance_type == NewSlicerInstanceType::Slicer && single_instance)
 				args.emplace_back("--single-instance");
+			else if (instance_type == NewSlicerInstanceType::Slicer && !paths_to_open.empty())
+				args.emplace_back("--no-single-instance");
 			if (delete_after_load && !paths_to_open.empty())
 				args.emplace_back("--delete-after-load=1");
 			boost::process::spawn(bin_path, args);
@@ -130,6 +134,8 @@ static void start_new_slicer_or_gcodeviewer(const NewSlicerInstanceType instance
 		}
 		if (instance_type == NewSlicerInstanceType::Slicer && single_instance)
 			args.emplace_back("--single-instance");
+		else if (instance_type == NewSlicerInstanceType::Slicer && !paths_to_open.empty())
+			args.emplace_back("--no-single-instance");
 		if (delete_after_load && !paths_to_open.empty())
 			args.emplace_back("--delete-after-load=1");
 		args.emplace_back(nullptr);

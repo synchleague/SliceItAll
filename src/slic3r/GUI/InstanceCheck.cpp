@@ -66,6 +66,8 @@ namespace instance_check_internal
 	{
 		std::optional<bool>	should_send;
 		std::string    		cl_string;
+		// A model or project path. Opening one must reuse the running app.
+		bool           		has_input_file { false };
 	};
 	static CommandLineAnalysis process_command_line(int argc, char** argv)
 	{
@@ -86,8 +88,11 @@ namespace instance_check_internal
 				ret.should_send = false;
 			else if (token == "--single-instance-on-url")
 				send_if_url = true;
-			else
+			else {
 				arguments.emplace_back(token);
+				if (!token.empty() && token.front() != '-')
+					ret.has_input_file = true;
+			}
 		} 
 		if (send_if_url && has_url) {
 			ret.should_send = true;
@@ -114,22 +119,16 @@ namespace instance_check_internal
 	static HWND l_prusa_slicer_hwnd;
 	static BOOL CALLBACK EnumWindowsProc(_In_ HWND   hwnd, _In_ LPARAM lParam)
 	{
-		//checks for other instances of prusaslicer, if found brings it to front and return false to stop enumeration and quit this instance
-		//search is done by classname(wxWindowNR is wxwidgets thing, so probably not unique) and name in window upper panel
-		//other option would be do a mutex and check for its existence
-		//BOOST_LOG_TRIVIAL(error) << "ewp: version: " << l_version_wstring;
+		//checks for other instances of Slice it All, if found brings it to front and return false to stop enumeration and quit this instance
+		//search is done by the window title and the instance hash stored on that window
 		TCHAR 		 wndText[1000];
-		TCHAR 		 className[1000];
-		int          err;
-		err = GetClassName(hwnd, className, 1000);
+		int          err = GetWindowText(hwnd, wndText, 1000);
 		if (err == 0)
 			return true;
-		err = GetWindowText(hwnd, wndText, 1000);
-		if (err == 0)
-			return true;
-		std::wstring classNameString(className);
 		std::wstring wndTextString(wndText);
-		if (wndTextString.find(L"Slice it All") != std::wstring::npos && classNameString == L"wxWindowNR") {
+		// The instance hash on the window identifies this build. The window class
+		// name is not stable across wxWidgets versions, so it is not part of the match.
+		if (wndTextString.find(L"Slice it All") != std::wstring::npos) {
 			//check if other instances has same instance hash
 			//if not it is not same version(binary) as this version 
 			HANDLE   handle = GetProp(hwnd, L"Instance_Hash_Minor");
@@ -185,17 +184,13 @@ namespace instance_check_internal
         }
 		
 		TCHAR 		 wndText[1000];
-		TCHAR 		 className[1000];
-		int          err;
-		err = GetClassName(hwnd, className, 1000);
+		int          err = GetWindowText(hwnd, wndText, 1000);
 		if (err == 0)
 			return true;
-		err = GetWindowText(hwnd, wndText, 1000);
-		if (err == 0)
-			return true;
-		std::wstring classNameString(className);
 		std::wstring wndTextString(wndText);
-		if (wndTextString.find(L"Slice it All") != std::wstring::npos && classNameString == L"wxWindowNR") {
+		// The instance hash on the window identifies this build. The window class
+		// name is not stable across wxWidgets versions, so it is not part of the match.
+		if (wndTextString.find(L"Slice it All") != std::wstring::npos) {
 			//check if other instances has same instance hash
 			//if not it is not same version(binary) as this version 
 			HANDLE   handle = GetProp(hwnd, L"Instance_Hash_Minor");
@@ -597,7 +592,7 @@ bool instance_check(int argc, char** argv, bool app_config_single_instance)
 	BOOST_LOG_TRIVIAL(debug) <<"full path: "<< lock_name;
 	instance_check_internal::CommandLineAnalysis cla = instance_check_internal::process_command_line(argc, argv);
 	if (! cla.should_send.has_value())
-		cla.should_send = app_config_single_instance;
+		cla.should_send = app_config_single_instance || cla.has_input_file;
 #ifdef _WIN32
 	GUI::wxGetApp().init_single_instance_checker(lock_name + ".lock", data_dir() + "\\cache\\");
 	if (cla.should_send.value() && GUI::wxGetApp().single_instance_checker()->IsAnotherRunning()) {
@@ -605,15 +600,18 @@ bool instance_check(int argc, char** argv, bool app_config_single_instance)
 	// get_lock() creates the lockfile therefore *cla.should_send is checked after
 	if (instance_check_internal::get_lock(lock_name + ".lock", data_dir() + "/cache/") && *cla.should_send) {
 #endif
-        instance_check_internal::send_message(instance_check_internal::compose_message_json("CLI", cla.cl_string), lock_name);
-		BOOST_LOG_TRIVIAL(error) << "Instance check: Another instance found. This instance will terminate. Lock file of current running instance is located at " << data_dir() << 
+        const bool delivered = instance_check_internal::send_message(instance_check_internal::compose_message_json("CLI", cla.cl_string), lock_name);
+		if (delivered) {
+			BOOST_LOG_TRIVIAL(info) << "Instance check: Another instance found. This instance will terminate. Lock file of current running instance is located at " << data_dir() <<
 #ifdef _WIN32
-			"\\cache\\"
+				"\\cache\\"
 #else // mac & linx
-			"/cache/"
+				"/cache/"
 #endif
-			<< lock_name << ".lock";
-		return true;
+				<< lock_name << ".lock";
+			return true;
+		}
+		BOOST_LOG_TRIVIAL(error) << "Instance check: Another instance is running, but the file could not be delivered.";
 	}
 	BOOST_LOG_TRIVIAL(info) << "Instance check: Another instance not found or single-instance not set.";
 	

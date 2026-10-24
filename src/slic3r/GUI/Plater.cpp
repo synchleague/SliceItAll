@@ -1128,12 +1128,20 @@ void Plater::priv::init()
     
     this->q->Bind(EVT_LOAD_MODEL_OTHER_INSTANCE, [this](LoadFromOtherInstanceEvent& evt) {
         BOOST_LOG_TRIVIAL(trace) << "Received load from other instance event.";
-        wxArrayString input_files;
-        for (size_t i = 0; i < evt.data.size(); ++i) {
-            input_files.push_back(from_u8(evt.data[i].string()));
+        if (MainFrame* frame = wxGetApp().mainframe) {
+            if (frame->IsIconized())
+                frame->Iconize(false);
+            frame->Raise();
         }
-        wxGetApp().mainframe->Raise();
-        this->q->load_files(input_files);
+        wxArrayString input_files;
+        for (const boost::filesystem::path& path : evt.data) {
+            if (boost::algorithm::iends_with(path.string(), ".3mf") && wxGetApp().mainframe)
+                wxGetApp().mainframe->open_project_tab(from_path(path));
+            else
+                input_files.push_back(from_path(path));
+        }
+        if (!input_files.empty())
+            this->q->load_files(input_files);
     });
     this->q->Bind(EVT_INSTANCE_GO_TO_FRONT, [this](InstanceGoToFrontEvent&) {
         bring_instance_forward();
