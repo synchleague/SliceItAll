@@ -54,8 +54,9 @@ BeadingStrategy::Beading OuterWallInsetBeadingStrategy::compute(coord_t thicknes
         return ret;
     }
 
-    // Actually move the outer wall inside. Ensure that the outer wall never goes beyond the middle line.
-    ret.toolpath_locations[0] = std::min(ret.toolpath_locations[0] + outer_wall_offset, thickness / 2);
+    // A positive offset moves the outer wall inward. A negative offset moves it back out
+    // so it can sit on the model edge without crossing the middle of the wall stack.
+    ret.toolpath_locations[0] = std::clamp(ret.toolpath_locations[0] + outer_wall_offset, coord_t(0), thickness / 2);
     return ret;
 }
 

@@ -897,7 +897,7 @@ wxString host_setup_hint(int index)
 wxColour connection_tone_colour(int tone)
 {
     switch (tone) {
-    case 1: return wxColour(254, 50, 173);
+    case 1: return wxGetApp().get_accent_clr();
     case 2: return wxColour(80, 190, 120);
     case 3: return wxColour(220, 90, 90);
     default: return wxColour(168, 168, 176);
@@ -3376,7 +3376,7 @@ void ConfigWizardIndex::on_paint(wxPaintEvent & evt)
     dc.DrawRectangle(0, 0, size.x, size.y);
 
     const int yinc = item_height();
-    const wxColour accent(254, 50, 173);
+    const wxColour accent = wxGetApp().get_accent_clr();
     const wxColour active_bg(47, 47, 56);
     const wxColour hover_bg(58, 56, 68);
     const wxColour idle_text(226, 226, 232);

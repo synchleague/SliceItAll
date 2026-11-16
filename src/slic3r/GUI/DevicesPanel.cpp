@@ -112,13 +112,13 @@ private:
         dc.DrawRectangle(0, 0, size.x, size.y);
         dc.SetFont(GetFont());
         const wxColour plain = wxGetApp().get_label_clr_default();
-        const wxColour accent(254, 50, 173);
+        const wxColour accent = wxGetApp().get_accent_clr();
         for (size_t i = 0; i < m_labels.size() && i < m_cells.size(); ++i) {
             const wxRect& rect = m_cells[i];
             const bool active = int(i) == m_active;
             const bool hover = int(i) == m_hover;
             if (active || hover) {
-                dc.SetBrush(active ? wxColour(47, 47, 56) : wxColour(60, 60, 68));
+                dc.SetBrush(active ? wxGetApp().get_color_selected_btn_bg() : wxGetApp().get_surface_hover_clr());
                 dc.SetPen(*wxTRANSPARENT_PEN);
                 dc.DrawRectangle(rect);
             }
@@ -374,7 +374,7 @@ wxColour status_colour(const std::string& status, bool linked)
     if (status == "Connected" || status == "Ready")
         return wxColour(80, 190, 120);
     if (status == "Checking" || status == "Printing")
-        return wxColour(254, 50, 173);
+        return wxGetApp().get_accent_clr();
     if (status == "Offline")
         return wxColour(232, 176, 74);
     if (status == "Failed" || !linked)
@@ -2206,7 +2206,7 @@ private:
         const double width = size.x * (pct / 100.0);
         if (width < 1)
             return;
-        gc->SetBrush(wxBrush(wxColour(254, 50, 173)));
+        gc->SetBrush(wxBrush(wxGetApp().get_accent_clr()));
         gc->DrawRoundedRectangle(0, 0, width, size.y, 3);
     }
 };
@@ -3306,7 +3306,7 @@ wxBitmap preview_bitmap(const wxImage& source, int width, int height)
         scaled.Rescale(drawn_w, drawn_h, wxIMAGE_QUALITY_BILINEAR);
         dc.DrawBitmap(wxBitmap(scaled), (width - drawn_w) / 2, (height - drawn_h) / 2, true);
     } else {
-        dc.SetPen(wxPen(wxColour(254, 50, 173), 2));
+        dc.SetPen(wxPen(wxGetApp().get_accent_clr(), 2));
         dc.SetBrush(*wxTRANSPARENT_BRUSH);
         const int inset = std::max(8, std::min(width, height) / 8);
         dc.DrawRoundedRectangle(inset, inset, std::max(1, width - 2 * inset), std::max(1, height - 2 * inset), 8);
@@ -3787,11 +3787,11 @@ private:
         const wxSize size = GetClientSize();
         const wxColour page = GetBackgroundColour();
         dc.SetPen(page);
-        dc.SetBrush(m_hot && m_editing && !m_filled ? wxColour(72, 36, 86) : page);
+        dc.SetBrush(m_hot && m_editing && !m_filled ? wxGetApp().get_color_selected_btn_bg() : page);
         dc.DrawRectangle(0, 0, size.x, size.y);
         if (!m_editing || size.x < 8 || size.y < 8)
             return;
-        const wxColour edge = wxColour(254, 50, 173);
+        const wxColour edge = wxGetApp().get_accent_clr();
         if (m_hot || !m_filled) {
             dc.SetPen(wxPen(edge, m_hot ? 3 : 2, m_hot || m_filled ? wxPENSTYLE_SOLID : wxPENSTYLE_SHORT_DASH));
             dc.SetBrush(*wxTRANSPARENT_BRUSH);
@@ -3800,7 +3800,7 @@ private:
         if (m_filled)
             return;
         dc.SetFont(wxGetApp().bold_font());
-        dc.SetTextForeground(m_hot ? *wxWHITE : wxColour(254, 50, 173));
+        dc.SetTextForeground(m_hot ? *wxWHITE : wxGetApp().get_accent_clr());
         const wxString label = m_hot ? _L("Release to place here") : _L("Drop here");
         const wxSize text = dc.GetTextExtent(label);
         dc.DrawText(label, std::max(12, (size.x - text.x) / 2), (size.y - text.y) / 2);

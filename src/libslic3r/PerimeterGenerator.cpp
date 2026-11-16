@@ -1009,7 +1009,12 @@ void PerimeterGenerator::process_arachne(
     // external perimeters
     coord_t ext_perimeter_width    = params.ext_perimeter_flow.scaled_width();
     coord_t ext_perimeter_spacing  = params.ext_perimeter_flow.scaled_spacing();
-    coord_t ext_perimeter_spacing2 = scaled<coord_t>(0.5f * (params.ext_perimeter_flow.spacing() + params.perimeter_flow.spacing()));
+    // Precise wall prints the outer wall against the model edge. The next wall
+    // is spaced by the full line width, so it does not push that outer line out.
+    const bool precise_outer_wall = params.config.precise_outer_wall.value && !params.config.external_perimeters_first.value;
+    coord_t ext_perimeter_spacing2 = precise_outer_wall ?
+        scaled<coord_t>(0.5f * (params.ext_perimeter_flow.width() + params.perimeter_flow.width())) :
+        scaled<coord_t>(0.5f * (params.ext_perimeter_flow.spacing() + params.perimeter_flow.spacing()));
     // solid infill
     coord_t solid_infill_spacing  = params.solid_infill_flow.scaled_spacing();
 
@@ -1036,9 +1041,14 @@ void PerimeterGenerator::process_arachne(
     if (params.config.top_one_perimeter_type == TopOnePerimeterType::TopSurfaces)
         loop_number = 0;
 
-    ExPolygons last   = offset_ex(surface.expolygon.simplify_p(params.scaled_resolution), - float(ext_perimeter_width / 2. - ext_perimeter_spacing / 2.));
+    // The usual inset leaves the outer bead overlapping the next wall. Precise wall
+    // insets the stack by that overlap and then shifts only the outer bead back out.
+    const double wall_overlap = double(ext_perimeter_width) / 2. - double(ext_perimeter_spacing) / 2.;
+    const bool   apply_precise_wall = precise_outer_wall && loop_number >= 1;
+    ExPolygons last   = offset_ex(surface.expolygon.simplify_p(params.scaled_resolution), - float(apply_precise_wall ? 2. * wall_overlap : wall_overlap));
     Polygons   last_p = to_polygons(last);
-    Arachne::WallToolPaths wall_tool_paths(last_p, ext_perimeter_spacing, perimeter_spacing, coord_t(loop_number + 1), 0, params.layer_height, params.object_config, params.print_config);
+    const coord_t wall_0_inset = apply_precise_wall ? coord_t(-std::lround(wall_overlap)) : 0;
+    Arachne::WallToolPaths wall_tool_paths(last_p, ext_perimeter_spacing, perimeter_spacing, coord_t(loop_number + 1), wall_0_inset, params.layer_height, params.object_config, params.print_config);
     Arachne::Perimeters    perimeters     = wall_tool_paths.getToolPaths();
     ExPolygons             infill_contour = union_ex(wall_tool_paths.getInnerContour());
 
@@ -1095,7 +1105,7 @@ void PerimeterGenerator::process_arachne(
         } else {
             // There is no top surface ExPolygon, so we call Arachne again with parameters
             // like when the single perimeter feature is disabled.
-            Arachne::WallToolPaths no_single_perimeter_tool_paths(last_p, ext_perimeter_spacing, perimeter_spacing, coord_t(inner_loop_number + 2), 0, params.layer_height, params.object_config, params.print_config);
+            Arachne::WallToolPaths no_single_perimeter_tool_paths(last_p, ext_perimeter_spacing, perimeter_spacing, coord_t(inner_loop_number + 2), wall_0_inset, params.layer_height, params.object_config, params.print_config);
             perimeters     = no_single_perimeter_tool_paths.getToolPaths();
             infill_contour = union_ex(no_single_perimeter_tool_paths.getInnerContour());
         }
@@ -1199,7 +1209,10 @@ void PerimeterGenerator::process_classic(
     // external perimeters
     coord_t ext_perimeter_width     = params.ext_perimeter_flow.scaled_width();
     coord_t ext_perimeter_spacing   = params.ext_perimeter_flow.scaled_spacing();
-    coord_t ext_perimeter_spacing2  = scaled<coord_t>(0.5f * (params.ext_perimeter_flow.spacing() + params.perimeter_flow.spacing()));
+    const bool precise_outer_wall = params.config.precise_outer_wall.value && !params.config.external_perimeters_first.value;
+    coord_t ext_perimeter_spacing2  = precise_outer_wall ?
+        scaled<coord_t>(0.5f * (params.ext_perimeter_flow.width() + params.perimeter_flow.width())) :
+        scaled<coord_t>(0.5f * (params.ext_perimeter_flow.spacing() + params.perimeter_flow.spacing()));
     // solid infill
     coord_t solid_infill_spacing    = params.solid_infill_flow.scaled_spacing();
     

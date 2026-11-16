@@ -579,8 +579,10 @@ void OptionsGroup::activate_line(Line& line)
                 m_grid_sizer->Add(sizer, 0, wxEXPAND | (staticbox ? wxALL : wxBOTTOM | wxTOP | wxLEFT), staticbox ? 0 : 1);
                 sizer->Add(label, 0, wxRIGHT | wxALIGN_CENTER_VERTICAL, 8);
             }
-            if (label != nullptr && line.label_tooltip != "")
+                if (label != nullptr && line.label_tooltip != "")
                 label->SetToolTip(line.label_tooltip);
+                if (label != nullptr && option_set.size() == 1)
+                    m_option_labels[option_set.front().opt_id] = label;
         }
     }
 
@@ -641,6 +643,7 @@ void OptionsGroup::activate_line(Line& line)
                 label->SetBackgroundStyle(wxBG_STYLE_PAINT);
                 label->SetFont(wxGetApp().normal_font());
                 h_sizer->Add(label, 0, wxALIGN_CENTER_VERTICAL, 0);
+                m_option_labels[opt.opt_id] = label;
             }
 
             if (option_set.size() == 1 && option_set.front().opt.full_width)
@@ -842,6 +845,22 @@ void ConfigOptionsGroup::on_change_OG(const t_config_option_key& opt_id, const b
 	}
 
 	OptionsGroup::on_change_OG(opt_id, value);
+}
+
+void OptionsGroup::set_option_label_colour(const t_config_option_key& opt_id, const wxColour& colour)
+{
+    wxColour& stored = m_option_label_colours[opt_id];
+    const bool changed = stored != colour;
+    stored = colour;
+    if (Field* field = get_field(opt_id))
+        field->set_label_colour(&stored);
+    const auto it = m_option_labels.find(opt_id);
+    if (it != m_option_labels.end() && it->second != nullptr && it->second->GetForegroundColour() != colour) {
+        it->second->SetForegroundColour(colour);
+        it->second->Refresh();
+    }
+    if (changed && custom_ctrl)
+        custom_ctrl->Refresh();
 }
 
 void ConfigOptionsGroup::back_to_initial_value(const std::string& opt_key)

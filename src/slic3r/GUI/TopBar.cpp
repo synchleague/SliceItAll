@@ -110,7 +110,7 @@ void TopBarItemsCtrl::Button::set_selected(bool selected)
 
     if (m_is_tab) {
         m_foreground_color = wxGetApp().get_label_clr_default();
-        m_background_color = selected ? wxColour(47, 47, 56) : wxGetApp().get_window_default_clr();
+        m_background_color = selected ? wxGetApp().get_color_selected_btn_bg() : wxGetApp().get_window_default_clr();
         Refresh();
         return;
     }
@@ -133,8 +133,8 @@ void TopBarItemsCtrl::Button::set_hovered(bool hovered)
 #endif /* no _WIN32 */
 
     if (m_is_tab) {
-        m_background_color = m_is_selected ? wxColour(47, 47, 56) :
-                             hovered       ? wxColour(60, 60, 68) :
+        m_background_color = m_is_selected ? wxGetApp().get_color_selected_btn_bg() :
+                             hovered       ? wxGetApp().get_surface_hover_clr() :
                                              wxGetApp().get_window_default_clr();
         this->Refresh();
         this->Update();
@@ -169,7 +169,7 @@ void TopBarItemsCtrl::Button::render()
         dc.DrawRoundedRectangle(rc, int(0.4* em));
 
     if (m_is_tab && m_is_selected) {
-        dc.SetPen(wxPen(wxColour(254, 50, 173), 2));
+        dc.SetPen(wxPen(wxGetApp().get_accent_clr(), 2));
         dc.DrawLine(int(0.6 * em), rc.height - 2, rc.width - int(0.6 * em), rc.height - 2);
     }
 

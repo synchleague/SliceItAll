@@ -10,6 +10,8 @@
 #include "WebView.hpp"
 #include "I18N.hpp"
 #include "format.hpp"
+#include "Widgets/Button.hpp"
+#include "Widgets/StateHandler.hpp"
 
 #include "libslic3r/BuildVolume.hpp"
 #include "libslic3r/Model.hpp"
@@ -20,7 +22,6 @@
 #include <wx/filename.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
-#include <wx/button.h>
 #include <wx/webview.h>
 #include <wx/stdpaths.h>
 #include <wx/timer.h>
@@ -651,14 +652,23 @@ public:
         credit->SetFont(wxGetApp().bold_font());
         header->Add(credit, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 12);
 
-        auto* send = new wxButton(this, wxID_ANY, _L("Send model"));
-        send->SetToolTip(_L("Send the current selection again. With nothing selected, every printable model is sent."));
-        send->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { send_model(); });
-        auto* import_btn = new wxButton(this, wxID_ANY, _L("Import result"));
+        auto* import_btn = new Button(this, _L("Import result"));
+        import_btn->SetFont(wxGetApp().normal_font());
+        const int em = std::max(10, wxGetApp().em_unit());
+        import_btn->SetCornerRadius(em * 0.45);
+        import_btn->SetPaddingSize(wxSize(em, em / 2));
+        const StateColor fill(
+            std::make_pair(0x33333A, (int) StateColor::Disabled),
+            std::make_pair(0xFF5EC4, (int) StateColor::Hovered),
+            std::make_pair(0xFE32AD, (int) StateColor::Normal));
+        import_btn->SetBackgroundColor(fill);
+        import_btn->SetBorderColor(fill);
+        import_btn->SetTextColor(StateColor(
+            std::make_pair(0x8E8E98, (int) StateColor::Disabled),
+            std::make_pair(0xFFFFFF, (int) StateColor::Normal)));
         import_btn->SetToolTip(_L("Export from the page and put that mesh on the build plate, replacing the model that was sent."));
         import_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { import_result(); });
         header->AddStretchSpacer(1);
-        header->Add(send, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 6);
         header->Add(import_btn, 0, wxALIGN_CENTER_VERTICAL);
         sizer->Add(header, 0, wxEXPAND | wxALL, 8);
 
@@ -711,10 +721,15 @@ public:
     {
         m_waiting_for_result = false;
         const bool replace = filename.find("fins-only") == std::string::npos && !m_plate.object_ids.empty();
-        if (place_on_plate(path, replace))
+        if (place_on_plate(path, replace)) {
             note(replace
                 ? _L("Result is on the build plate and replaced the model that was sent.")
                 : _L("Result is on the build plate."), true);
+            if (m_close_after_import) {
+                m_close_after_import = false;
+                Close();
+            }
+        }
     }
 
 private:
@@ -814,7 +829,7 @@ private:
         if ((m_hooked && bed_settled && model_settled) || m_ticks > 220 || (m_ticks > 160 && !m_model_loading))
             m_timer.Stop();
         if (m_ticks == 160 && !m_status_locked && !m_model_sent && !m_bed_sent && !m_model_failed && !m_model_loading)
-            note(_L("The tool page did not finish loading. Use Send model once it is open."), true);
+            note(_L("The tool page did not finish loading. Close this window and open the tool again."), true);
     }
 
     void begin_ingest(bool force)
@@ -899,6 +914,7 @@ private:
             const std::string result = script_result(m_browser, export_js());
             if (result == "exporting") {
                 m_waiting_for_result = true;
+                m_close_after_import = true;
                 note(_L("Waiting for the page to finish. The result will be placed on the build plate."));
                 return;
             }
@@ -914,8 +930,10 @@ private:
             note(_L("The page had nothing ready to export. Export from the page, or choose a file you already saved."), true);
             return;
         }
-        if (place_on_plate(into_path(dialog.GetPath()), false))
+        if (place_on_plate(into_path(dialog.GetPath()), false)) {
             note(_L("Imported onto the build plate."), true);
+            Close();
+        }
     }
 
     bool place_on_plate(const boost::filesystem::path& path, bool replace_sent)
@@ -1125,6 +1143,7 @@ return 'unknown';
     bool m_model_loading{ false };
     bool m_status_locked{ false };
     bool m_waiting_for_result{ false };
+    bool m_close_after_import{ false };
     bool m_force_ingest{ false };
     int m_alive_ticks{ 0 };
     int m_ticks{ 0 };
@@ -1189,6 +1208,46 @@ const EditorPlugin* find_editor_plugin(const std::string& id)
     return it == g_plugins.end() ? nullptr : &*it;
 }
 
+namespace {
+
+bool viewport_model_selected()
+{
+    Plater* plater = wxGetApp().plater();
+    if (plater == nullptr || plater->canvas3D() == nullptr)
+        return false;
+    const Selection& selection = plater->canvas3D()->get_selection();
+    return !selection.is_empty() && !selection.get_object_idxs().empty();
+}
+
+std::vector<wxWindow*> g_plugin_buttons;
+
+} // namespace
+
+bool editor_plugin_can_open()
+{
+    return viewport_model_selected();
+}
+
+void track_editor_plugin_button(wxWindow* button)
+{
+    if (button == nullptr)
+        return;
+    g_plugin_buttons.push_back(button);
+    button->Enable(viewport_model_selected());
+    button->Bind(wxEVT_DESTROY, [button](wxWindowDestroyEvent& evt) {
+        g_plugin_buttons.erase(std::remove(g_plugin_buttons.begin(), g_plugin_buttons.end(), button), g_plugin_buttons.end());
+        evt.Skip();
+    });
+}
+
+void update_editor_plugin_buttons()
+{
+    const bool ready = viewport_model_selected();
+    for (wxWindow* button : g_plugin_buttons)
+        if (button != nullptr)
+            button->Enable(ready);
+}
+
 void open_editor_plugin(const std::string& id)
 {
     ensure_builtin_editor_plugins();
@@ -1199,7 +1258,7 @@ void open_editor_plugin(const std::string& id)
         plugin->open_native();
         return;
     }
-    if (plugin->url.empty())
+    if (plugin->url.empty() || !viewport_model_selected())
         return;
     if (WebAppPluginDialog* open = find_open_plugin_dialog(id)) {
         open->Show();

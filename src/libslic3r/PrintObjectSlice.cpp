@@ -6,6 +6,7 @@
 #include <oneapi/tbb/blocked_range.h>
 #include <oneapi/tbb/parallel_for.h>
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <string>
@@ -517,6 +518,128 @@ std::string fix_slicing_errors(LayerPtrs &layers, const std::function<void()> &t
 }
 */
 
+// Round stairsteps along Z with a spherical kernel. Opening cuts convex lips,
+// closing fills concave corners, and a vertical wall comes back unchanged.
+static std::vector<ExPolygons> sphere_erode(const std::vector<ExPolygons> &src, const std::vector<double> &z, double radius, const std::function<void()> &cancel)
+{
+    std::vector<ExPolygons> out(src.size());
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, src.size()), [&](const tbb::blocked_range<size_t> &range) {
+        for (size_t i = range.begin(); i < range.end(); ++i) {
+            cancel();
+            ExPolygons acc = offset_ex(src[i], -float(scale_(radius)));
+            if (acc.empty()) {
+                out[i] = std::move(acc);
+                continue;
+            }
+            for (int dir : { -1, 1 }) {
+                for (int k = int(i) + dir; k >= 0 && k < int(src.size()); k += dir) {
+                    const double dz = std::abs(z[size_t(k)] - z[i]);
+                    if (dz >= radius)
+                        break;
+                    const double horiz = std::sqrt(std::max(0., radius * radius - dz * dz));
+                    if (horiz < 1e-6)
+                        continue;
+                    acc = intersection_ex(acc, offset_ex(src[size_t(k)], -float(scale_(horiz))));
+                    if (acc.empty())
+                        break;
+                }
+                if (acc.empty())
+                    break;
+            }
+            out[i] = std::move(acc);
+        }
+    });
+    return out;
+}
+
+static std::vector<ExPolygons> sphere_dilate(const std::vector<ExPolygons> &src, const std::vector<double> &z, double radius, const std::function<void()> &cancel)
+{
+    std::vector<ExPolygons> out(src.size());
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, src.size()), [&](const tbb::blocked_range<size_t> &range) {
+        for (size_t i = range.begin(); i < range.end(); ++i) {
+            cancel();
+            ExPolygons acc = offset_ex(src[i], float(scale_(radius)));
+            for (int dir : { -1, 1 }) {
+                for (int k = int(i) + dir; k >= 0 && k < int(src.size()); k += dir) {
+                    const double dz = std::abs(z[size_t(k)] - z[i]);
+                    if (dz >= radius)
+                        break;
+                    const double horiz = std::sqrt(std::max(0., radius * radius - dz * dz));
+                    if (horiz < 1e-6)
+                        continue;
+                    acc = union_ex(acc, offset_ex(src[size_t(k)], float(scale_(horiz))));
+                }
+            }
+            out[i] = std::move(acc);
+        }
+    });
+    return out;
+}
+
+static void apply_smoothed_slices(Layer &layer, ExPolygons smoothed)
+{
+    const LayerRegionPtrs &regions = layer.regions();
+    if (regions.empty()) {
+        layer.lslices = std::move(smoothed);
+        layer.lslice_indices_sorted_by_print_order = chain_expolygons(layer.lslices);
+        return;
+    }
+    if (regions.size() == 1) {
+        regions.front()->m_slices.set(std::move(smoothed), stInternal);
+    } else {
+        const size_t n = regions.size();
+        std::vector<ExPolygons> kept(n);
+        size_t best = 0;
+        double best_area = -1.;
+        for (size_t i = 0; i < n; ++i) {
+            kept[i] = intersection_ex(to_expolygons(regions[i]->slices().surfaces), smoothed);
+            double region_area = 0.;
+            for (const ExPolygon &ex : kept[i])
+                region_area += ex.area();
+            if (region_area > best_area) {
+                best_area = region_area;
+                best = i;
+            }
+        }
+        ExPolygons covered;
+        for (const ExPolygons &part : kept)
+            append(covered, part);
+        ExPolygons extra = diff_ex(smoothed, union_ex(covered));
+        if (!extra.empty())
+            kept[best] = union_ex(kept[best], extra);
+        for (size_t i = 0; i < n; ++i)
+            regions[i]->m_slices.set(std::move(kept[i]), stInternal);
+    }
+    layer.make_slices();
+}
+
+static void smooth_vertical_edges(PrintObject &object, double radius, const std::function<void()> &cancel)
+{
+    if (radius <= 0. || object.layers().size() < 2)
+        return;
+    const auto &layers = object.layers();
+    std::vector<ExPolygons> src(layers.size());
+    std::vector<double>     z(layers.size());
+    for (size_t i = 0; i < layers.size(); ++i) {
+        z[i] = layers[i]->print_z;
+        const LayerRegionPtrs &regions = layers[i]->regions();
+        if (regions.size() == 1)
+            src[i] = to_expolygons(regions.front()->slices().surfaces);
+        else {
+            ExPolygons merged;
+            for (const LayerRegion *region : regions)
+                append(merged, to_expolygons(region->slices().surfaces));
+            src[i] = union_ex(merged);
+        }
+    }
+    // Open, then close. Convex lips are cut and concave corners are filled.
+    std::vector<ExPolygons> smoothed = sphere_erode(sphere_dilate(sphere_dilate(sphere_erode(src, z, radius, cancel), z, radius, cancel), z, radius, cancel), z, radius, cancel);
+    for (size_t i = 0; i < layers.size(); ++i) {
+        cancel();
+        apply_smoothed_slices(*layers[i], std::move(smoothed[i]));
+    }
+}
+
 // Called by make_perimeters()
 // 1) Decides Z positions of the layers,
 // 2) Initializes layers and their regions
@@ -538,6 +661,18 @@ void PrintObject::slice()
     m_layers = new_layers(this, generate_object_layers(m_slicing_params, layer_height_profile));
     this->slice_volumes();
     m_print->throw_if_canceled();
+    if (m_config.vertical_edge_smoothing.value > 0.) {
+        // The first layer keeps an uncompensated outline for the brim. Put it back after rounding.
+        const bool restore_first = m_config.elefant_foot_compensation.value > 0. && !m_layers.empty();
+        ExPolygons first_uncompensated;
+        if (restore_first)
+            first_uncompensated = m_layers.front()->lslices;
+        smooth_vertical_edges(*this, m_config.vertical_edge_smoothing.value, [this]() { m_print->throw_if_canceled(); });
+        if (restore_first && !m_layers.empty()) {
+            m_layers.front()->lslices = std::move(first_uncompensated);
+            m_layers.front()->lslice_indices_sorted_by_print_order = chain_expolygons(m_layers.front()->lslices);
+        }
+    }
 #if 0
     // Layer::slicing_errors is no more set since 1.41.1 or possibly earlier, thus this code
     // was not really functional for a long day and nobody missed it.

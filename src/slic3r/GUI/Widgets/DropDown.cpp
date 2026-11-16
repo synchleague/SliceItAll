@@ -41,7 +41,7 @@ DropDown::DropDown(std::vector<wxString> &texts,
                    std::vector<wxBitmapBundle> &icons)
     : texts(texts)
     , icons(icons)
-    , radius(Slic3r::GUI::wxGetApp().suppress_round_corners() ? 0 : 5)
+    , radius(Slic3r::GUI::wxGetApp().suppress_round_corners() ? 0 : 8)
     , state_handler(this)
     , text_color(0x363636)
     , border_color(0xDBDBDB)
@@ -304,7 +304,6 @@ void DropDown::render(wxDC &dc)
     else
         dc.DrawRoundedRectangle(rc, radius);
 
-    // draw hover rectangle
     wxRect rcContent = {{0, offset.y}, rowSize};
     const int text_size = int(texts.size());
 
@@ -312,34 +311,24 @@ void DropDown::render(wxDC &dc)
     if (has_bar)
         rcContent.width -= slider_width;
 
-    if (hover_item >= 0 && (states & StateColor::Hovered)) {
-        rcContent.y += rowSize.y * hover_item;
-        if (rcContent.GetBottom() > 0 && rcContent.y < size.y) {
-            if (selection == hover_item)
-                dc.SetBrush(wxBrush(selector_background_color.colorForStates(StateColor::Disabled)));
-            dc.SetPen(wxPen(selector_border_color.colorForStates(states)));
-            rcContent.Deflate(4, 1);
-            dc.DrawRectangle(rcContent);
-            rcContent.Inflate(4, 1);
-        }
-        rcContent.y = offset.y;
-    }
-    // draw checked rectangle
-    if (selection >= 0 && (selection != hover_item || (states & StateColor::Hovered) == 0)) {
-        rcContent.y += rowSize.y * selection;
-        if (rcContent.GetBottom() > 0 && rcContent.y < size.y) {
-            dc.SetBrush(wxBrush(selector_background_color.colorForStates(StateColor::Disabled)));
-            dc.SetPen(wxPen(selector_background_color.colorForStates(states)));
-            rcContent.Deflate(4, 1);
-            if (is_retina)
-                rc.y += 1;
-            dc.DrawRectangle(rcContent);
-            rcContent.Inflate(4, 1);
-            if (is_retina)
-                rc.y -= 1;
-        }
-        rcContent.y = offset.y;
-    }
+    auto paint_row = [&](int index, const wxColour& fill) {
+        rcContent.y = offset.y + rowSize.y * index;
+        if (rcContent.GetBottom() <= 0 || rcContent.y >= size.y)
+            return;
+        wxRect row = rcContent;
+        row.Deflate(4, 2);
+        dc.SetBrush(wxBrush(fill));
+        dc.SetPen(wxPen(fill));
+        if (radius > 0.)
+            dc.DrawRoundedRectangle(row, 4);
+        else
+            dc.DrawRectangle(row);
+    };
+    if (selection >= 0)
+        paint_row(selection, wxColour(92, 32, 68));
+    if (hover_item >= 0 && hover_item != selection && (states & StateColor::Hovered))
+        paint_row(hover_item, wxColour(50, 50, 58));
+    rcContent.y = offset.y;
     dc.SetBrush(*wxTRANSPARENT_BRUSH);
     {
         wxSize offset = (rowSize - textSize) / 2;

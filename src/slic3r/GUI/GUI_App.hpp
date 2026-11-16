@@ -155,6 +155,9 @@ private:
     wxColour        m_color_label_sys;
     wxColour        m_color_label_default;
     wxColour        m_color_window_default;
+    wxColour        m_color_accent;
+    wxColour        m_color_surface;
+    wxColour        m_color_surface_hover;
 //#ifdef _WIN32
     wxColour        m_color_highlight_label_default;
     wxColour        m_color_hovered_btn_label;
@@ -256,6 +259,9 @@ public:
     const wxColour& get_label_clr_sys()     { return m_color_label_sys; }
     const wxColour& get_label_clr_default() { return m_color_label_default; }
     const wxColour& get_window_default_clr(){ return m_color_window_default; }
+    const wxColour& get_accent_clr() const { return m_color_accent; }
+    const wxColour& get_surface_clr() const { return m_color_surface; }
+    const wxColour& get_surface_hover_clr() const { return m_color_surface_hover; }
 
     const std::string       get_html_bg_color(wxWindow* html_parent);
 

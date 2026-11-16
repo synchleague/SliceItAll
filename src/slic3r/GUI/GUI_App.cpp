@@ -1757,16 +1757,19 @@ void GUI_App::init_ui_colours()
 
     bool is_dark_mode = dark_mode();
 //#ifdef _WIN32
-    m_color_label_default           = is_dark_mode ? wxColour(250, 250, 250): wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT);
-    m_color_highlight_label_default = is_dark_mode ? wxColour(230, 230, 230): wxSystemSettings::GetColour(/*wxSYS_COLOUR_HIGHLIGHTTEXT*/wxSYS_COLOUR_WINDOWTEXT);
-    m_color_highlight_default       = is_dark_mode ? wxColour(78, 78, 78)   : wxSystemSettings::GetColour(wxSYS_COLOUR_3DLIGHT);
-    m_color_hovered_btn_label       = is_dark_mode ? wxColour(254, 50, 173) : wxColour(79, 9, 159);
-    m_color_default_btn_label       = is_dark_mode ? wxColour(221, 67, 241) : wxColour(79, 9, 159);
-    m_color_selected_btn_bg         = is_dark_mode ? wxColour(62, 28, 96)   : wxColour(232, 214, 242);
+    m_color_label_default           = is_dark_mode ? wxColour(236, 236, 240): wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT);
+    m_color_highlight_label_default = is_dark_mode ? wxColour(236, 236, 240): wxSystemSettings::GetColour(/*wxSYS_COLOUR_HIGHLIGHTTEXT*/wxSYS_COLOUR_WINDOWTEXT);
+    m_color_highlight_default       = is_dark_mode ? wxColour(42, 42, 48)   : wxSystemSettings::GetColour(wxSYS_COLOUR_3DLIGHT);
+    m_color_accent                  = is_dark_mode ? wxColour(254, 50, 173) : wxColour(79, 9, 159);
+    m_color_surface                 = is_dark_mode ? wxColour(38, 38, 44)   : wxColour(244, 244, 247);
+    m_color_surface_hover           = is_dark_mode ? wxColour(52, 52, 60)   : wxColour(232, 232, 238);
+    m_color_hovered_btn_label       = m_color_accent;
+    m_color_default_btn_label       = is_dark_mode ? wxColour(236, 236, 240) : wxColour(28, 28, 34);
+    m_color_selected_btn_bg         = is_dark_mode ? wxColour(72, 32, 58)   : wxColour(244, 224, 236);
 //#else
 //    m_color_label_default = wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT);
 //#endif
-    m_color_window_default          = is_dark_mode ? wxColour(28, 26, 36)   : wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
+    m_color_window_default          = is_dark_mode ? wxColour(22, 22, 26)   : wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
 }
 
 void GUI_App::update_ui_colours_from_appconfig()

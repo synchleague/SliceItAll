@@ -1185,6 +1185,15 @@ void PrintConfigDef::init_fff_params()
     def->mode = comExpert;
     def->set_default_value(new ConfigOptionBool(false));
 
+    def = this->add("precise_outer_wall", coBool);
+    def->label = L("Precise wall");
+    def->category = L("Layers and Perimeters");
+    def->tooltip = L("Leave a gap between the outer wall and the wall behind it, so the outer wall "
+                     "is not pushed outward. A sloped side then follows the model instead of leaving "
+                     "a single line sticking out. Used when inner walls are printed before the outer wall.");
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("extra_perimeters", coBool);
     def->label = L("Extra perimeters if needed");
     def->category = L("Layers and Perimeters");
@@ -3983,6 +3992,18 @@ void PrintConfigDef::init_fff_params()
                    "(negative = inwards, positive = outwards). This might be useful "
                    "for fine-tuning hole sizes.");
     def->sidetext = L("mm");
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionFloat(0));
+
+    def = this->add("vertical_edge_smoothing", coFloat);
+    def->label = L("Vertical edge smoothing");
+    def->category = L("Advanced");
+    def->tooltip = L("Rounds the stairsteps on a sloped wall by this radius. 0 keeps each layer "
+                     "on the sliced outline. A larger radius follows a curve more closely and also "
+                     "rounds support that follows the wall. Details thinner than the radius can disappear.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->max = 2;
     def->mode = comExpert;
     def->set_default_value(new ConfigOptionFloat(0));
 

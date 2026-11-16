@@ -5125,17 +5125,17 @@ private:
 
         const bool enabled = IsEnabled();
         dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.SetBrush(enabled && m_hover ? wxColour(72, 36, 86) : wxColour(48, 48, 60));
+        dc.SetBrush(enabled && m_hover ? wxGetApp().get_color_selected_btn_bg() : wxGetApp().get_surface_clr());
         dc.DrawRoundedRectangle(0, 0, size.x, size.y, size.y / 2);
         if (enabled) {
-            dc.SetPen(wxPen(wxColour(254, 50, 173), 1));
+            dc.SetPen(wxPen(wxGetApp().get_accent_clr(), 1));
             dc.SetBrush(*wxTRANSPARENT_BRUSH);
             dc.DrawRoundedRectangle(1, 1, size.x - 2, size.y - 2, size.y / 2);
         }
 
         const wxString label = _L("Add build plate");
         dc.SetFont(GetFont());
-        dc.SetTextForeground(enabled ? wxColour(254, 50, 173) : wxColour(140, 140, 150));
+        dc.SetTextForeground(enabled ? wxGetApp().get_accent_clr() : wxColour(140, 140, 150));
         const wxSize text = dc.GetTextExtent(label);
         dc.DrawText(label, (size.x - text.x) / 2, (size.y - text.y) / 2);
     }

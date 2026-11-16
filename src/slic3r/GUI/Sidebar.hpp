@@ -136,6 +136,7 @@ class Sidebar : public wxPanel
     bool m_process_fitting { false };
     wxString m_process_hint_text;
     std::vector<std::shared_ptr<ConfigOptionsGroup>> m_process_groups;
+    std::vector<int>                    m_process_group_page;
     std::vector<std::shared_ptr<ConfigOptionsGroup>> m_sla_groups;
     std::unique_ptr<DynamicPrintConfig> m_process_global;
     int                                 m_process_category { 0 };
@@ -204,6 +205,7 @@ public:
     void update_filament_badges();
     std::string filament_slot_color(size_t idx) const;
     void reload_process_settings();
+    void mark_process_state();
     void offer_global_change_to_objects(const std::string& key);
     void install_pane_bar();
     void apply_pane_visibility();

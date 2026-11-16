@@ -17,6 +17,7 @@
 #include "libslic3r/enum_bitmask.hpp"
 #include "libslic3r/GCode/Thumbnails.hpp"
 
+#include <cmath>
 #include <regex>
 #include <wx/numformatter.h>
 #include <wx/bookctrl.h> // IWYU pragma: keep
@@ -30,6 +31,8 @@
 #include "BitmapComboBox.hpp"
 
 #include "Widgets/ComboBox.hpp"
+
+#include <wx/dcmemory.h>
 
 #ifdef __WXOSX__
 #define wxOSX true
@@ -1046,6 +1049,174 @@ using choice_ctrl = wxComboBox;
 #endif // __WXOSX__
 #endif
 
+namespace {
+
+constexpr int kSwatch = 26;
+
+wxPoint swatch_pt(const wxRect& r, int x, int y)
+{
+    return wxPoint(r.x + x * r.width / 100, r.y + y * r.height / 100);
+}
+
+void swatch_poly(wxDC& dc, const wxRect& r, std::initializer_list<std::pair<int, int>> pts)
+{
+    if (pts.size() < 2)
+        return;
+    auto it = pts.begin();
+    wxPoint prev = swatch_pt(r, it->first, it->second);
+    for (++it; it != pts.end(); ++it) {
+        const wxPoint cur = swatch_pt(r, it->first, it->second);
+        dc.DrawLine(prev, cur);
+        prev = cur;
+    }
+}
+
+void swatch_hlines(wxDC& dc, const wxRect& r, int count, int inset = 8)
+{
+    for (int i = 1; i <= count; ++i) {
+        const int y = i * 100 / (count + 1);
+        swatch_poly(dc, r, { {inset, y}, {100 - inset, y} });
+    }
+}
+
+void swatch_grid(wxDC& dc, const wxRect& r)
+{
+    swatch_hlines(dc, r, 3, 10);
+    for (int i = 1; i <= 3; ++i) {
+        const int x = i * 25;
+        swatch_poly(dc, r, { {x, 10}, {x, 90} });
+    }
+}
+
+void swatch_diagonals(wxDC& dc, const wxRect& r, bool both)
+{
+    for (int i = -1; i <= 3; ++i) {
+        const int a = i * 28;
+        swatch_poly(dc, r, { {a, 100}, {a + 100, 0} });
+        if (both)
+            swatch_poly(dc, r, { {a, 0}, {a + 100, 100} });
+    }
+}
+
+void swatch_hex(wxDC& dc, const wxRect& r, int cx, int cy, int rad)
+{
+    std::vector<std::pair<int, int>> pts;
+    for (int i = 0; i <= 6; ++i) {
+        const double a = (i * 60.0 - 30.0) * 3.141592653589793 / 180.0;
+        pts.emplace_back(cx + int(std::cos(a) * rad), cy + int(std::sin(a) * rad));
+    }
+    auto it = pts.begin();
+    wxPoint prev = swatch_pt(r, it->first, it->second);
+    for (++it; it != pts.end(); ++it) {
+        const wxPoint cur = swatch_pt(r, it->first, it->second);
+        dc.DrawLine(prev, cur);
+        prev = cur;
+    }
+}
+
+void draw_pattern_swatch(wxDC& dc, const wxRect& r, const std::string& key)
+{
+    if (key == "concentric") {
+        dc.DrawRoundedRectangle(swatch_pt(r, 18, 18), wxSize(r.width * 64 / 100, r.height * 64 / 100), 6);
+        dc.DrawRoundedRectangle(swatch_pt(r, 32, 32), wxSize(r.width * 36 / 100, r.height * 36 / 100), 4);
+        return;
+    }
+    if (key == "honeycomb" || key == "3dhoneycomb") {
+        swatch_hex(dc, r, 30, 38, 16);
+        swatch_hex(dc, r, 62, 38, 16);
+        swatch_hex(dc, r, 46, 66, 16);
+        return;
+    }
+    if (key == "grid" || key == "rectilinear-grid") {
+        swatch_grid(dc, r);
+        return;
+    }
+    if (key == "triangles") {
+        swatch_diagonals(dc, r, true);
+        return;
+    }
+    if (key == "stars") {
+        swatch_poly(dc, r, { {50, 12}, {58, 40}, {88, 40}, {64, 58}, {74, 88}, {50, 70}, {26, 88}, {36, 58}, {12, 40}, {42, 40}, {50, 12} });
+        return;
+    }
+    if (key == "monotonic") {
+        swatch_hlines(dc, r, 4, 14);
+        swatch_poly(dc, r, { {10, 16}, {10, 84} });
+        return;
+    }
+    if (key == "cubic" || key == "adaptivecubic" || key == "supportcubic") {
+        swatch_diagonals(dc, r, false);
+        return;
+    }
+    if (key == "gyroid") {
+        swatch_poly(dc, r, { {8, 35}, {25, 18}, {42, 35}, {58, 52}, {75, 35}, {92, 18} });
+        swatch_poly(dc, r, { {8, 68}, {25, 52}, {42, 68}, {58, 84}, {75, 68}, {92, 52} });
+        return;
+    }
+    if (key == "hilbertcurve") {
+        swatch_poly(dc, r, { {18, 70}, {18, 30}, {42, 30}, {42, 70}, {58, 70}, {58, 30}, {82, 30}, {82, 70}, {70, 70}, {70, 48}, {58, 48} });
+        return;
+    }
+    if (key == "archimedeanchords") {
+        dc.DrawEllipticArc(swatch_pt(r, 30, 30), wxSize(r.width * 40 / 100, r.height * 40 / 100), 20, 340);
+        dc.DrawEllipticArc(swatch_pt(r, 18, 18), wxSize(r.width * 64 / 100, r.height * 64 / 100), 200, 520);
+        return;
+    }
+    if (key == "octagramspiral") {
+        swatch_poly(dc, r, { {50, 50}, {62, 50}, {62, 38}, {38, 38}, {38, 66}, {74, 66}, {74, 26}, {26, 26}, {26, 78}, {82, 78} });
+        return;
+    }
+    if (key == "lightning") {
+        swatch_poly(dc, r, { {58, 8}, {40, 42}, {52, 42}, {36, 92}, {62, 48}, {48, 48}, {70, 8} });
+        return;
+    }
+    if (key == "zigzag") {
+        swatch_poly(dc, r, { {8, 30}, {28, 70}, {48, 30}, {68, 70}, {92, 30} });
+        swatch_poly(dc, r, { {8, 55}, {28, 85}, {48, 55}, {68, 85}, {92, 55} });
+        return;
+    }
+    if (key == "monotoniclines") {
+        swatch_poly(dc, r, { {10, 25}, {42, 25} });
+        swatch_poly(dc, r, { {52, 25}, {90, 25} });
+        swatch_poly(dc, r, { {10, 50}, {36, 50} });
+        swatch_poly(dc, r, { {48, 50}, {90, 50} });
+        swatch_poly(dc, r, { {10, 75}, {58, 75} });
+        swatch_poly(dc, r, { {70, 75}, {90, 75} });
+        return;
+    }
+    if (key == "line") {
+        swatch_hlines(dc, r, 2, 12);
+        return;
+    }
+    swatch_hlines(dc, r, 4, 8);
+}
+
+wxBitmapBundle pattern_swatch(const std::string& key)
+{
+    wxBitmap bmp(kSwatch, kSwatch);
+    {
+        wxMemoryDC dc(bmp);
+        dc.SetBackground(wxBrush(wxColour(58, 28, 48)));
+        dc.Clear();
+        dc.SetPen(wxPen(wxColour(255, 120, 196), 2));
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+        draw_pattern_swatch(dc, wxRect(1, 1, kSwatch - 2, kSwatch - 2), key);
+        dc.SelectObject(wxNullBitmap);
+    }
+    return wxBitmapBundle::FromBitmap(bmp);
+}
+
+bool is_pattern_choice(const std::string& opt_id)
+{
+    return opt_id == "fill_pattern"
+        || opt_id == "top_fill_pattern"
+        || opt_id == "bottom_fill_pattern"
+        || opt_id == "support_material_pattern"
+        || opt_id == "support_material_interface_pattern";
+}
+
+} // namespace
+
 void Choice::BUILD() {
     wxSize size(def_width_wider() * m_em_unit, wxDefaultCoord);
     if (m_opt.height >= 0) size.SetHeight(m_opt.height*m_em_unit);
@@ -1085,9 +1256,18 @@ void Choice::BUILD() {
 
     if (m_opt.enum_def) {
         if (auto& labels = m_opt.enum_def->labels(); !labels.empty()) {
-            bool localized = m_opt.enum_def->has_labels();
-            for (const std::string& el : labels)
-                temp->Append(localized ? _(from_u8(el)) : from_u8(el));
+            const bool localized = m_opt.enum_def->has_labels();
+            const bool patterned = is_pattern_choice(m_opt_id);
+            const std::vector<std::string>& values = m_opt.enum_def->values();
+            for (size_t i = 0; i < labels.size(); ++i) {
+                const wxString text = localized ? _(from_u8(labels[i])) : from_u8(labels[i]);
+                if (patterned)
+                    temp->Append(text, pattern_swatch(i < values.size() ? values[i] : std::string()));
+                else
+                    temp->Append(text);
+            }
+            if (patterned)
+                temp->GetDropDown().SetAlignIcon(true);
             set_selection();
         }
 	}

@@ -1327,7 +1327,7 @@ void ImGuiWrapper::init_style()
     set_color(ImGuiCol_TitleBg,         ImGuiPureWrap::COL_WINDOW_BACKGROUND);
     set_color(ImGuiCol_TitleBgActive,   ImGuiPureWrap::COL_WINDOW_BACKGROUND);
     set_color(ImGuiCol_PopupBg,         ImGuiPureWrap::COL_WINDOW_BACKGROUND);
-    set_color(ImGuiCol_Border,          ImVec4(0.28f, 0.24f, 0.34f, 1.0f));
+    set_color(ImGuiCol_Border,          ImVec4(0.27f, 0.27f, 0.31f, 1.0f));
 
     // Generics
     set_color(ImGuiCol_FrameBg,         ImGuiPureWrap::COL_GREY_DARK);
@@ -1355,7 +1355,7 @@ void ImGuiWrapper::init_style()
     set_color(ImGuiCol_SliderGrabActive,ImGuiPureWrap::COL_ORANGE_LIGHT);
 
     // Separator
-    set_color(ImGuiCol_Separator,       ImVec4(0.32f, 0.28f, 0.38f, 1.0f));
+    set_color(ImGuiCol_Separator,       ImVec4(0.27f, 0.27f, 0.31f, 1.0f));
 
     // Tabs
     set_color(ImGuiCol_Tab,                 ImGuiPureWrap::COL_ORANGE_DARK);

@@ -2117,7 +2117,7 @@ void MainFrame::init_menubar_as_editor()
         append_menu_item(pluginsMenu, wxID_ANY, from_u8(plugin.title),
             format_wxstr(_L("%1% by %2%. %3%"), from_u8(plugin.title), from_u8(plugin.credit), from_u8(plugin.summary)),
             [id = plugin.id](wxCommandEvent&) { open_editor_plugin(id); },
-            "", nullptr, []() { return true; }, this);
+            "", nullptr, []() { return editor_plugin_can_open(); }, this);
     }
     wxMenu* configMenu = wxGetApp().get_config_menu(this);
 

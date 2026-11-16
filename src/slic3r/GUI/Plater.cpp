@@ -94,6 +94,7 @@
 #include "GUI_App.hpp"
 #include "DevicesPanel.hpp"
 #include "GUI_ObjectList.hpp"
+#include "EditorPlugin.hpp"
 #include "GUI_ObjectManipulation.hpp"
 #include "GUI_Utils.hpp"
 #include "GUI_Factories.hpp"
@@ -428,7 +429,7 @@ private:
         dc.SetBrush(GetBackgroundColour());
         dc.DrawRectangle(0, 0, size.x, size.y);
 
-        dc.SetPen(wxPen(wxColour(254, 50, 173), 2));
+        dc.SetPen(wxPen(wxColour(196, 196, 204), 2));
         const int mid_y = size.y / 2;
         const int mid_x = size.x / 2;
         // Point toward the side the pane collapses to, or back out when it is collapsed.
@@ -2264,12 +2265,14 @@ void Plater::priv::selection_changed()
 
     // forces a frame render to update the view (to avoid a missed update if, for example, the context menu appears)
     view3D->render();
+    update_editor_plugin_buttons();
 }
 
 void Plater::priv::object_list_changed()
 {
     if (!wxGetApp().plater())
         return;
+    update_editor_plugin_buttons();
     const bool export_in_progress = this->background_process.is_export_scheduled(); // || ! send_gcode_file.empty());
                                                                                     //
     if (printer_technology == ptFFF) {

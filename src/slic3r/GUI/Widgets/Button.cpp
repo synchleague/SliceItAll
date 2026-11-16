@@ -1,4 +1,5 @@
 #include "Button.hpp"
+#include "../GUI_App.hpp"
 
 #include <wx/dcgraph.h>
 #include <wx/dc.h>
@@ -26,14 +27,24 @@ END_EVENT_TABLE()
 Button::Button()
     : paddingSize(10, 8)
 {
-    background_color = StateColor(
+    const bool dark = Slic3r::GUI::wxGetApp().dark_mode();
+    background_color = dark ? StateColor(
+        std::make_pair(0x33333A, (int) StateColor::Disabled),
+        std::make_pair(0x1FCB5A, (int) StateColor::Hovered | StateColor::Checked),
+        std::make_pair(0x00AE42, (int) StateColor::Checked),
+        std::make_pair(0x3A3A44, (int) StateColor::Hovered),
+        std::make_pair(0x2E2E36, (int) StateColor::Normal))
+        : StateColor(
         std::make_pair(0xF0F0F0, (int) StateColor::Disabled),
         std::make_pair(0x37EE7C, (int) StateColor::Hovered | StateColor::Checked),
         std::make_pair(0x00AE42, (int) StateColor::Checked),
-        std::make_pair(*wxLIGHT_GREY, (int) StateColor::Hovered), 
+        std::make_pair(*wxLIGHT_GREY, (int) StateColor::Hovered),
         std::make_pair(*wxWHITE, (int) StateColor::Normal));
-    text_color       = StateColor(
-        std::make_pair(*wxLIGHT_GREY, (int) StateColor::Disabled), 
+    text_color = dark ? StateColor(
+        std::make_pair(0x8E8E98, (int) StateColor::Disabled),
+        std::make_pair(0xF4F4F6, (int) StateColor::Normal))
+        : StateColor(
+        std::make_pair(*wxLIGHT_GREY, (int) StateColor::Disabled),
         std::make_pair(*wxBLACK, (int) StateColor::Normal));
 }
 

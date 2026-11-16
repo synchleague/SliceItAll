@@ -2123,7 +2123,7 @@ bool edit_rack_slot(wxWindow* parent, RackSlot& slot, int index, bool multi_colo
     intro->Wrap(360);
     sizer->Add(intro, 0, wxEXPAND | wxALL, 12);
 
-    int r = 254, g = 50, b = 173;
+    int r = 140, g = 140, b = 148;
     const bool started_with_color = parse_color(slot.color, r, g, b);
     bool picked = started_with_color;
     bool cleared = false;
@@ -2162,7 +2162,7 @@ bool edit_rack_slot(wxWindow* parent, RackSlot& slot, int index, bool multi_colo
     auto mark_chips = [&](int red, int green, int blue) {
         for (Chip& chip : chip_frames) {
             const bool on = chip.r == red && chip.g == green && chip.b == blue;
-            chip.frame->SetBackgroundColour(on ? wxColour(254, 50, 173) : wxColour(28, 26, 36));
+            chip.frame->SetBackgroundColour(on ? wxGetApp().get_accent_clr() : wxGetApp().get_window_default_clr());
             chip.frame->Refresh();
         }
     };
@@ -2181,7 +2181,7 @@ bool edit_rack_slot(wxWindow* parent, RackSlot& slot, int index, bool multi_colo
     for (const Swatch& chip_color : swatches) {
         auto* frame = new wxPanel(&dialog, wxID_ANY, wxDefaultPosition, wxSize(36, 36));
         frame->SetMinSize(wxSize(36, 36));
-        frame->SetBackgroundColour(wxColour(28, 26, 36));
+        frame->SetBackgroundColour(wxGetApp().get_window_default_clr());
         frame->SetCursor(wxCursor(wxCURSOR_HAND));
         auto* inner = new wxPanel(frame, wxID_ANY, wxDefaultPosition, wxSize(26, 26));
         inner->SetBackgroundColour(wxColour(chip_color.r, chip_color.g, chip_color.b));

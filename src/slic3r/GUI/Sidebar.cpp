@@ -1233,7 +1233,7 @@ private:
 
         const int radius = size.y / 2;
         dc.SetPen(*wxTRANSPARENT_PEN);
-        dc.SetBrush(wxColour(32, 32, 40));
+        dc.SetBrush(wxGetApp().get_surface_clr());
         dc.DrawRoundedRectangle(wxRect(0, 0, size.x, size.y), radius);
 
         const int inset = 2;
@@ -1241,7 +1241,7 @@ private:
         const wxRect selected = m_objects
             ? wxRect(half, inset, size.x - half - inset, size.y - inset * 2)
             : wxRect(inset, inset, half - inset, size.y - inset * 2);
-        dc.SetBrush(wxColour(254, 50, 173));
+        dc.SetBrush(wxGetApp().get_accent_clr());
         dc.DrawRoundedRectangle(selected, selected.height / 2);
 
         dc.SetFont(GetFont());
@@ -1319,6 +1319,15 @@ public:
         Refresh();
     }
 
+    // 0 clean, 1 differs from the default, 2 differs from the saved preset.
+    void set_marks(const std::vector<int>& marks)
+    {
+        if (marks == m_marks)
+            return;
+        m_marks = marks;
+        Refresh();
+    }
+
 private:
     struct Cell { wxRect rect; };
 
@@ -1367,18 +1376,24 @@ private:
         dc.DrawRectangle(0, 0, size.x, size.y);
         dc.SetFont(GetFont());
         const wxColour plain = wxGetApp().get_label_clr_default();
-        const wxColour accent(254, 50, 173);
+        const wxColour accent = wxGetApp().get_accent_clr();
         for (size_t i = 0; i < m_labels.size(); ++i) {
             const wxRect& rect = m_cells[i].rect;
             const bool active = int(i) == m_active;
             const bool hover = int(i) == m_hover;
             if (active || hover) {
-                const wxColour fill = active ? wxColour(47, 47, 56) : wxColour(60, 60, 68);
+                const wxColour fill = active ? wxGetApp().get_color_selected_btn_bg() : wxGetApp().get_surface_hover_clr();
                 dc.SetBrush(fill);
                 dc.SetPen(wxPen(fill, 1));
                 dc.DrawRoundedRectangle(rect, m_radius);
             }
-            dc.SetTextForeground(active ? *wxWHITE : plain);
+            int mark = 0;
+            if (i < m_marks.size())
+                mark = m_marks[i];
+            const wxColour text_clr = mark == 2 ? wxGetApp().get_label_clr_modified() :
+                                      mark == 1 ? wxGetApp().get_label_clr_sys() :
+                                      active ? *wxWHITE : plain;
+            dc.SetTextForeground(text_clr);
             const wxSize text = dc.GetTextExtent(m_labels[i]);
             const int text_y = m_scale > 1.05
                 ? rect.y + (rect.height - text.y) / 2 - 1
@@ -1390,7 +1405,7 @@ private:
                 dc.DrawLine(rect.x + m_inset, y_line, rect.GetRight() - m_inset, y_line);
             }
         }
-        dc.SetPen(wxPen(wxColour(90, 90, 104), 1));
+        dc.SetPen(wxPen(wxColour(58, 58, 66), 1));
         dc.DrawLine(0, size.y - 1, size.x, size.y - 1);
     }
 
@@ -1433,6 +1448,7 @@ private:
     int m_radius{ 4 };
     int m_active{ 0 };
     int m_hover{ -1 };
+    std::vector<int> m_marks;
 };
 
 static bool config_flag(const char* key, bool fallback)
@@ -1553,9 +1569,6 @@ void Sidebar::fit_process_controls()
 
     const int margin = int(0.5 * em);
     const int inner = std::max(40, visible - margin - 4);
-    const int label_px = 12 * em;
-    const int field_w = std::max(2 * em, inner - label_px - 4 * em);
-
     m_process_fitting = true;
     m_process_field_width = inner;
     auto pin = [](wxWindow* win, int width) {
@@ -1579,13 +1592,6 @@ void Sidebar::fit_process_controls()
         m_process_hint->SetLabel(m_process_hint_text);
         m_process_hint->Wrap(wrap);
     }
-
-    for (const std::shared_ptr<ConfigOptionsGroup>& group : m_process_groups)
-        if (group)
-            group->constrain_field_widths(field_w);
-    for (const std::shared_ptr<ConfigOptionsGroup>& group : m_sla_groups)
-        if (group)
-            group->constrain_field_widths(field_w);
 
     m_process_panel->Layout();
     if (m_scrolled_panel) {
@@ -1644,7 +1650,8 @@ void Sidebar::build_process_panel()
         wxString title;
         std::vector<ProcessOpt> options;
     };
-    auto add_page = [this](const std::vector<ProcessSection>& sections, const std::string& plugin_slot = {}) {
+    int process_page_index = 0;
+    auto add_page = [this, &process_page_index](const std::vector<ProcessSection>& sections, const std::string& plugin_slot = {}) {
         auto* page = new wxPanel(m_process_panel);
 #ifdef _WIN32
         wxGetApp().UpdateDarkUI(page);
@@ -1656,7 +1663,8 @@ void Sidebar::build_process_panel()
                 if (plugin.slot != plugin_slot)
                     continue;
                 auto* plugin_btn = new wxButton(page, wxID_ANY, from_u8(plugin.title), wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
-                plugin_btn->SetToolTip(format_wxstr(_L("%1% by %2%. %3%"), from_u8(plugin.title), from_u8(plugin.credit), from_u8(plugin.summary)));
+                plugin_btn->SetToolTip(format_wxstr(_L("%1% by %2%. %3% Select a model in the view first."), from_u8(plugin.title), from_u8(plugin.credit), from_u8(plugin.summary)));
+                track_editor_plugin_button(plugin_btn);
 #ifdef _WIN32
                 wxGetApp().UpdateDarkUI(plugin_btn, true);
 #endif
@@ -1666,8 +1674,7 @@ void Sidebar::build_process_panel()
         }
 
         for (const ProcessSection& section : sections) {
-            auto group = std::make_shared<ConfigOptionsGroup>(page, section.title);
-            group->set_config(&wxGetApp().preset_bundle->prints.get_edited_preset().config);
+            auto group = std::make_shared<ConfigOptionsGroup>(page, section.title, &wxGetApp().preset_bundle->prints.get_edited_preset().config, true);
             group->label_width = 12;
             group->on_change = [this](const t_config_option_key& opt_id, const boost::any&) {
                 on_process_option(opt_id);
@@ -1677,78 +1684,91 @@ void Sidebar::build_process_panel()
                 if (!spec.label.empty())
                     option.opt.label = into_u8(spec.label);
                 option.opt.mode = spec.mode;
-                option.opt.full_width = true;
                 group->append_single_option_line(option);
             }
             group->activate();
             page_sizer->Add(group->sizer, 0, wxEXPAND | wxTOP, section.title.empty() ? 0 : int(0.6 * wxGetApp().em_unit()));
             m_process_groups.push_back(std::move(group));
+            m_process_group_page.push_back(process_page_index);
         }
         page->SetSizer(page_sizer);
         m_process_pages_sizer->Add(page, 0, wxEXPAND);
         m_process_pages.push_back(page);
+        ++process_page_index;
     };
 
     add_page({
-        { "", {
+        { L("Layer height"), {
             { "layer_height", L("Layer height") },
-            { "first_layer_height", L("First layer height") },
-            { "perimeters", L("Wall loops") },
-            { "top_solid_layers", L("Top shell layers") },
-            { "bottom_solid_layers", L("Bottom shell layers") },
-            { "seam_position", L("Seam position") }
+            { "first_layer_height", L("First layer height") }
         }},
+        { L("Seam"), {
+            { "seam_position", L("Seam position") },
+            { "seam_gap_distance", L("Seam gap"), comExpert },
+            { "staggered_inner_seams", L("Stagger inner seams"), comExpert },
+            { "scarf_seam_placement", L("Scarf seam"), comExpert }
+        }},
+        { L("Line width"), {
+            { "extrusion_width", L("Default"), comExpert },
+            { "first_layer_extrusion_width", L("First layer"), comExpert },
+            { "external_perimeter_extrusion_width", L("Outer wall"), comExpert },
+            { "perimeter_extrusion_width", L("Inner wall"), comExpert },
+            { "top_infill_extrusion_width", L("Top surface"), comExpert },
+            { "solid_infill_extrusion_width", L("Internal solid infill"), comExpert },
+            { "infill_extrusion_width", L("Sparse infill"), comExpert }
+        }},
+        { L("Precision"), {
+            { "slice_closing_radius", L("Slice gap closing radius"), comExpert },
+            { "resolution", L("Resolution"), comExpert },
+            { "vertical_edge_smoothing", L("Vertical edge smoothing"), comExpert },
+            { "elefant_foot_compensation", L("Elephant foot compensation"), comExpert },
+            { "xy_size_compensation", L("XY compensation"), comExpert },
+            { "perimeter_generator", L("Wall generator"), comExpert },
+            { "precise_outer_wall", L("Precise wall"), comExpert },
+            { "avoid_crossing_perimeters", L("Avoid crossing walls"), comExpert },
+            { "avoid_crossing_perimeters_max_detour", L("Max detour"), comExpert },
+            { "avoid_crossing_curled_overhangs", L("Avoid curled overhangs"), comExpert }
+        }},
+        { L("Ironing"), {
+            { "ironing", L("Ironing") },
+            { "ironing_type", L("Ironing type"), comAdvanced },
+            { "ironing_flowrate", L("Ironing flow"), comAdvanced },
+            { "ironing_spacing", L("Ironing spacing"), comAdvanced }
+        }}
+    });
+    add_page({
         { L("Walls"), {
-            { "spiral_vase", L("Spiral vase"), comAdvanced },
-            { "extra_perimeters", L("Extra walls"), comAdvanced },
+            { "perimeters", L("Wall loops") },
+            { "extra_perimeters", L("Alternate extra wall"), comAdvanced },
+            { "thin_walls", L("Detect thin walls"), comAdvanced },
             { "extra_perimeters_on_overhangs", L("Extra walls on overhangs"), comAdvanced },
-            { "thin_walls", L("Thin walls"), comAdvanced },
+            { "ensure_vertical_shell_thickness", L("Vertical shell thickness"), comAdvanced },
             { "overhangs", L("Detect bridging"), comAdvanced },
             { "thick_bridges", L("Thick bridges"), comAdvanced },
             { "external_perimeters_first", L("Outer wall first"), comAdvanced },
             { "gap_fill_enabled", L("Fill gaps"), comAdvanced },
-            { "top_solid_min_thickness", L("Min top thickness"), comAdvanced },
-            { "bottom_solid_min_thickness", L("Min bottom thickness"), comAdvanced },
-            { "ensure_vertical_shell_thickness", L("Vertical shell thickness"), comAdvanced }
-        }},
-        { L("Seams"), {
-            { "seam_gap_distance", L("Seam gap"), comExpert },
-            { "staggered_inner_seams", L("Stagger inner seams"), comExpert },
-            { "scarf_seam_placement", L("Scarf seam"), comExpert },
-            { "avoid_crossing_perimeters", L("Avoid crossing walls"), comExpert },
-            { "avoid_crossing_perimeters_max_detour", L("Max detour"), comExpert },
-            { "avoid_crossing_curled_overhangs", L("Avoid curled overhangs"), comExpert },
-            { "perimeter_generator", L("Perimeter generator"), comExpert },
+            { "spiral_vase", L("Spiral vase"), comAdvanced },
             { "top_one_perimeter_type", L("One top perimeter"), comExpert },
-            { "only_one_perimeter_first_layer", L("One perimeter on first layer"), comExpert },
-            { "elefant_foot_compensation", L("Elephant foot"), comExpert },
-            { "xy_size_compensation", L("XY compensation"), comExpert }
+            { "only_one_perimeter_first_layer", L("One perimeter on first layer"), comExpert }
         }},
-        { L("Line width"), {
-            { "extrusion_width", L("Default width"), comExpert },
-            { "first_layer_extrusion_width", L("First layer width"), comExpert },
-            { "perimeter_extrusion_width", L("Wall width"), comExpert },
-            { "external_perimeter_extrusion_width", L("Outer wall width"), comExpert },
-            { "infill_extrusion_width", L("Infill width"), comExpert },
-            { "solid_infill_extrusion_width", L("Solid infill width"), comExpert },
-            { "top_infill_extrusion_width", L("Top infill width"), comExpert }
-        }}
-    });
-    add_page({
-        { "", {
-            { "fill_density", L("Sparse infill density") },
-            { "fill_pattern", L("Sparse infill pattern") },
-            { "top_fill_pattern", L("Top fill pattern") },
-            { "bottom_fill_pattern", L("Bottom fill pattern") },
-            { "infill_every_layers", L("Infill combination") },
-            { "solid_infill_every_layers", L("Solid infill every") }
+        { L("Top/bottom shells"), {
+            { "top_solid_layers", L("Top shell layers") },
+            { "top_solid_min_thickness", L("Top shell thickness"), comAdvanced },
+            { "top_fill_pattern", L("Top surface pattern") },
+            { "bottom_solid_layers", L("Bottom shell layers") },
+            { "bottom_solid_min_thickness", L("Bottom shell thickness"), comAdvanced },
+            { "bottom_fill_pattern", L("Bottom surface pattern") },
+            { "infill_overlap", L("Top/Bottom solid infill/wall overlap"), comAdvanced }
         }},
         { L("Infill"), {
+            { "fill_density", L("Sparse infill density") },
+            { "fill_pattern", L("Sparse infill pattern") },
+            { "infill_every_layers", L("Infill combination") },
+            { "solid_infill_every_layers", L("Solid infill every") },
             { "fill_angle", L("Fill angle"), comAdvanced },
             { "infill_anchor", L("Infill anchor"), comAdvanced },
             { "infill_anchor_max", L("Infill anchor max"), comAdvanced },
             { "solid_infill_below_area", L("Solid infill threshold"), comAdvanced },
-            { "infill_overlap", L("Infill overlap"), comAdvanced },
             { "bridge_angle", L("Bridge angle"), comAdvanced },
             { "bridge_flow_ratio", L("Bridge flow"), comAdvanced },
             { "automatic_infill_combination", L("Combine infill"), comExpert },
@@ -1758,25 +1778,27 @@ void Sidebar::build_process_panel()
         }}
     });
     add_page({
-        { "", {
-            { "perimeter_speed", L("Wall speed") },
-            { "external_perimeter_speed", L("Outer wall") },
-            { "infill_speed", L("Sparse infill") },
-            { "solid_infill_speed", L("Solid infill") },
-            { "travel_speed", L("Travel") },
-            { "first_layer_speed", L("First layer") }
+        { L("Initial layer speed"), {
+            { "first_layer_speed", L("First layer") },
+            { "first_layer_infill_speed", L("First layer infill"), comAdvanced },
+            { "first_layer_speed_over_raft", L("First layer over raft"), comAdvanced }
         }},
-        { L("More speeds"), {
+        { L("Other layers speed"), {
+            { "external_perimeter_speed", L("Outer wall") },
+            { "perimeter_speed", L("Inner wall") },
             { "small_perimeter_speed", L("Small walls"), comAdvanced },
-            { "top_solid_infill_speed", L("Top solid infill"), comAdvanced },
-            { "support_material_speed", L("Support"), comAdvanced },
-            { "support_material_interface_speed", L("Support interface"), comAdvanced },
+            { "infill_speed", L("Sparse infill") },
+            { "solid_infill_speed", L("Internal solid infill") },
+            { "top_solid_infill_speed", L("Top surface"), comAdvanced },
+            { "gap_fill_speed", L("Gap fill"), comAdvanced },
             { "bridge_speed", L("Bridges"), comAdvanced },
             { "over_bridge_speed", L("Over bridges"), comAdvanced },
-            { "gap_fill_speed", L("Gap fill"), comAdvanced },
-            { "ironing_speed", L("Ironing"), comAdvanced },
-            { "first_layer_infill_speed", L("First layer infill"), comAdvanced },
-            { "first_layer_speed_over_raft", L("First layer over raft"), comAdvanced },
+            { "support_material_speed", L("Support"), comAdvanced },
+            { "support_material_interface_speed", L("Support interface"), comAdvanced },
+            { "ironing_speed", L("Ironing"), comAdvanced }
+        }},
+        { L("Travel speed"), {
+            { "travel_speed", L("Travel") },
             { "travel_speed_z", L("Z travel"), comAdvanced }
         }},
         { L("Overhangs"), {
@@ -1802,7 +1824,7 @@ void Sidebar::build_process_panel()
         }}
     });
     add_page({
-        { "", {
+        { L("Support"), {
             { "slice_bed_as_one_object", L("Treat build plate as one object") },
             { "support_material", L("Enable support") },
             { "support_material_auto", L("Automatic supports") },
@@ -1845,7 +1867,7 @@ void Sidebar::build_process_panel()
         }}
     }, "supports");
     add_page({
-        { "", {
+        { L("Multimaterial"), {
             { "wipe_tower", L("Prime tower") },
             { "wipe_tower_width", L("Prime tower width") },
             { "interface_shells", L("Interface shells") },
@@ -1874,24 +1896,22 @@ void Sidebar::build_process_panel()
         }}
     });
     add_page({
-        { "", {
+        { L("Bed adhesion"), {
             { "brim_type", L("Brim type") },
             { "brim_width", L("Brim width") },
             { "brim_separation", L("Brim separation") },
             { "skirts", L("Skirt loops") },
             { "skirt_distance", L("Skirt distance") },
-            { "ironing", L("Ironing") },
-            { "fuzzy_skin", L("Fuzzy skin") }
-        }},
-        { L("Skirt, ironing, and surface"), {
             { "skirt_height", L("Skirt height"), comAdvanced },
             { "draft_shield", L("Draft shield"), comAdvanced },
-            { "min_skirt_length", L("Min skirt length"), comAdvanced },
-            { "ironing_type", L("Ironing type"), comAdvanced },
-            { "ironing_flowrate", L("Ironing flow"), comAdvanced },
-            { "ironing_spacing", L("Ironing spacing"), comAdvanced },
+            { "min_skirt_length", L("Min skirt length"), comAdvanced }
+        }},
+        { L("Fuzzy skin"), {
+            { "fuzzy_skin", L("Fuzzy skin") },
             { "fuzzy_skin_thickness", L("Fuzzy skin thickness"), comAdvanced },
-            { "fuzzy_skin_point_dist", L("Fuzzy skin point distance"), comAdvanced },
+            { "fuzzy_skin_point_dist", L("Fuzzy skin point distance"), comAdvanced }
+        }},
+        { L("Special mode"), {
             { "complete_objects", L("Complete individual objects"), comExpert }
         }}
     }, "surface");
@@ -1902,11 +1922,10 @@ void Sidebar::build_process_panel()
         wxGetApp().UpdateDarkUI(page);
 #endif
         auto* page_sizer = new wxBoxSizer(wxVERTICAL);
-        auto group = std::make_shared<ConfigOptionsGroup>(page, "");
         DynamicPrintConfig* cfg = type == Preset::TYPE_SLA_MATERIAL
             ? &wxGetApp().preset_bundle->sla_materials.get_edited_preset().config
             : &wxGetApp().preset_bundle->sla_prints.get_edited_preset().config;
-        group->set_config(cfg);
+        auto group = std::make_shared<ConfigOptionsGroup>(page, "", cfg, true);
         group->label_width = 12;
         group->on_change = [this, type](const t_config_option_key& opt_id, const boost::any&) {
             on_sla_option(type, opt_id);
@@ -1916,7 +1935,6 @@ void Sidebar::build_process_panel()
             if (!spec.second.empty())
                 option.opt.label = into_u8(spec.second);
             option.opt.mode = comSimple;
-            option.opt.full_width = true;
             group->append_single_option_line(option);
         }
         group->activate();
@@ -2178,6 +2196,54 @@ void Sidebar::reload_process_settings()
     // Value changes can resize an editor to its text. Measure the pane again.
     m_process_field_width = 0;
     fit_process_controls();
+    mark_process_state();
+}
+
+void Sidebar::mark_process_state()
+{
+    if (m_process_groups.empty() || m_process_group_page.size() != m_process_groups.size())
+        return;
+
+    PresetCollection& prints = wxGetApp().preset_bundle->prints;
+    const std::vector<std::string> dirty = prints.current_dirty_options(true);
+    const std::vector<std::string> nonsys = prints.current_different_from_parent_options(true);
+    auto listed = [](const std::vector<std::string>& keys, const std::string& key) {
+        return std::find(keys.begin(), keys.end(), key) != keys.end();
+    };
+
+    std::vector<int> marks(m_process_pages.size(), 0);
+    const wxColour normal = wxGetApp().get_label_clr_default();
+    const wxColour modified = wxGetApp().get_label_clr_modified();
+    const wxColour sys = wxGetApp().get_label_clr_sys();
+    ModelObject* object = m_process_objects ? selected_process_object() : nullptr;
+
+    for (size_t i = 0; i < m_process_groups.size(); ++i) {
+        const std::shared_ptr<ConfigOptionsGroup>& group = m_process_groups[i];
+        if (!group)
+            continue;
+        const int page = m_process_group_page[i];
+        for (const auto& item : group->opt_map()) {
+            std::string key = item.second.first;
+            if (const auto hash = key.find('#'); hash != std::string::npos)
+                key.resize(hash);
+            const bool unsaved = object ? object->config.has(key) : listed(dirty, key);
+            const bool not_default = object ? false : listed(nonsys, key);
+            wxColour colour = normal;
+            int mark = 0;
+            if (unsaved) {
+                colour = modified;
+                mark = 2;
+            } else if (not_default) {
+                colour = sys;
+                mark = 1;
+            }
+            group->set_option_label_colour(item.first, colour);
+            if (page >= 0 && page < int(marks.size()) && mark > marks[page])
+                marks[page] = mark;
+        }
+    }
+    if (m_process_tabs)
+        m_process_tabs->set_marks(marks);
 }
 
 void Sidebar::on_process_option(const std::string& opt_id)

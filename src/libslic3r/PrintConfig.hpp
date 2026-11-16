@@ -743,6 +743,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     // The rest
     ((ConfigOptionBool,                thick_bridges))
     ((ConfigOptionFloat,               xy_size_compensation))
+    ((ConfigOptionFloat,               vertical_edge_smoothing))
     ((ConfigOptionBool,                wipe_into_objects))
 
     ((ConfigOptionBool,                interlocking_beam))
@@ -775,6 +776,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloatOrPercent,       overhang_speed_2))
     ((ConfigOptionFloatOrPercent,       overhang_speed_3))
     ((ConfigOptionBool,                 external_perimeters_first))
+    ((ConfigOptionBool,                 precise_outer_wall))
     ((ConfigOptionBool,                 extra_perimeters))
     ((ConfigOptionBool,                 extra_perimeters_on_overhangs))
     ((ConfigOptionFloat,                fill_angle))

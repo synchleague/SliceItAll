@@ -161,6 +161,7 @@ void TextInput::SysColorsChanged()
 void TextInput::SetIcon(const wxBitmapBundle& icon_in)
 {
     icon = icon_in;
+    Refresh();
 }
 
 void TextInput::SetLabelColor(StateColor const &color)
@@ -223,10 +224,15 @@ void TextInput::SetMinSize(const wxSize& size)
 {
     wxSize size2 = size;
     if (size2.y < 0) {
+        int current = 0;
 #ifdef __WXMAC__
         if (GetPeer()) // peer is not ready in Create on mac
 #endif
-        size2.y = GetSize().y;
+        current = GetSize().y;
+        // Before the first layout the height is 0. Keeping that as the minimum
+        // collapses the field, which is why numeric settings lost their boxes.
+        if (current > 0)
+            size2.y = current;
     }
     wxWindow::SetMinSize(size2);
 }

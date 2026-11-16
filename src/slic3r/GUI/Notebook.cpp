@@ -45,7 +45,7 @@ void ButtonsListCtrl::OnPaint(wxPaintEvent&)
 
     const wxColour& selected_btn_bg  = Slic3r::GUI::wxGetApp().get_color_selected_btn_bg();
     const wxColour& default_btn_bg   = Slic3r::GUI::wxGetApp().get_highlight_default_clr();
-    const wxColour& btn_marker_color = Slic3r::GUI::wxGetApp().get_color_hovered_btn_label();
+    const wxColour& btn_marker_color = Slic3r::GUI::wxGetApp().get_accent_clr();
 
     // highlight selected notebook button
 

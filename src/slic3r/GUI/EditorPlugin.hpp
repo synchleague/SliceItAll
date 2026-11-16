@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+class wxWindow;
+
 namespace Slic3r::GUI {
 
 // A tool that extends slicing or mesh editing.
@@ -28,6 +30,9 @@ void ensure_builtin_editor_plugins();
 const std::vector<EditorPlugin>& editor_plugins();
 const EditorPlugin* find_editor_plugin(const std::string& id);
 void open_editor_plugin(const std::string& id);
+bool editor_plugin_can_open();
+void track_editor_plugin_button(wxWindow* button);
+void update_editor_plugin_buttons();
 
 } // namespace Slic3r::GUI
 

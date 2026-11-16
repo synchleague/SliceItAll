@@ -446,14 +446,14 @@ private:
         dc.DrawRectangle(0, 0, size.x, size.y);
         dc.SetFont(GetFont());
         const wxColour plain = wxGetApp().get_label_clr_default();
-        const wxColour accent(254, 50, 173);
+        const wxColour accent = wxGetApp().get_accent_clr();
         for (size_t i = 0; i < m_labels.size(); ++i) {
             const wxRect& rect = m_cells[i].rect;
             const bool active = int(i) == m_active;
             if (active) {
-                dc.SetBrush(wxColour(47, 47, 56));
+                dc.SetBrush(wxGetApp().get_color_selected_btn_bg());
                 dc.SetPen(*wxTRANSPARENT_PEN);
-                dc.DrawRectangle(rect);
+                dc.DrawRoundedRectangle(rect, 4);
             }
             dc.SetTextForeground(active ? *wxWHITE : plain);
             const wxSize text = dc.GetTextExtent(m_labels[i]);
@@ -1745,6 +1745,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("external_perimeters_first", category_path + "external-perimeters-first");
         optgroup->append_single_option_line("gap_fill_enabled", category_path + "fill-gaps");
         optgroup->append_single_option_line("perimeter_generator");
+        optgroup->append_single_option_line("precise_outer_wall");
 
         optgroup = page->new_optgroup(L("Fuzzy skin (experimental)"));
         category_path = "fuzzy-skin_246186/#";
@@ -1964,6 +1965,7 @@ void TabPrint::build()
         optgroup->append_single_option_line("slice_closing_radius");
         optgroup->append_single_option_line("slicing_mode");
         optgroup->append_single_option_line("resolution");
+        optgroup->append_single_option_line("vertical_edge_smoothing");
         optgroup->append_single_option_line("gcode_resolution");
         optgroup->append_single_option_line("arc_fitting");
         optgroup->append_single_option_line("xy_size_compensation");

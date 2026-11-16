@@ -194,6 +194,7 @@ public:
     // Show/hide a whole line in custom_control, if this line contains opt_key
     void            show_line(const t_config_option_key& opt_key, bool show);
 
+	void			set_option_label_colour(const t_config_option_key& opt_id, const wxColour& colour);
 	void			set_name(const wxString& new_name) { stb->SetLabel(new_name); }
 	wxString		get_name() const { return stb->GetLabel(); }
 
@@ -235,6 +236,8 @@ protected:
     /// using types that need to know what it is beyond the public interface 
     /// need to cast based on the related ConfigOptionDef.
     t_optionfield_map		m_fields;
+    std::map<t_config_option_key, wxStaticText*> m_option_labels;
+    std::map<t_config_option_key, wxColour> m_option_label_colours;
     bool					m_disabled {false};
     wxGridSizer*			m_grid_sizer {nullptr};
 	// "true" if option is created in preset tabs
