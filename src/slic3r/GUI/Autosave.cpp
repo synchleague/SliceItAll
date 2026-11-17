@@ -42,7 +42,7 @@ namespace GUI {
 namespace {
 
 constexpr int k_tick_ms = 2000;
-constexpr auto k_quiet = std::chrono::seconds(8);
+constexpr auto k_quiet = std::chrono::seconds(2);
 constexpr auto k_max_gap = std::chrono::seconds(45);
 
 struct Stamp {
@@ -791,7 +791,10 @@ bool Autosave::offer_recovery()
     RichMessageDialog dialog(frame, message, _L("Recover project"), wxYES_NO | wxICON_QUESTION);
     dialog.SetYesNoLabels(found.size() > 1 ? _L("Recover all") : _L("Recover"), _L("Start fresh"));
     if (dialog.ShowModal() != wxID_YES) {
-        m_impl->discard_all();
+        // Leave the files. The dashboard last-projects row can open them later,
+        // and a normal exit still deletes them.
+        if (frame)
+            frame->refresh_recent_projects();
         return false;
     }
 
@@ -830,7 +833,55 @@ bool Autosave::offer_recovery()
     }
     if (any)
         frame->select_active_project_tab();
+    frame->refresh_recent_projects();
     return any;
+}
+
+std::vector<Autosave::Entry> Autosave::recoverable() const
+{
+    std::vector<Entry> out;
+    if (!m_impl)
+        return out;
+    for (const RecoveryItem& item : list_recoveries()) {
+        Entry entry;
+        entry.path = into_u8(from_path(item.file));
+        entry.label = into_u8(recovery_label(item));
+        out.push_back(std::move(entry));
+    }
+    return out;
+}
+
+bool Autosave::restore_one(const std::string& path)
+{
+    if (!m_impl || path.empty())
+        return false;
+    std::vector<RecoveryItem> found = list_recoveries();
+    auto it = std::find_if(found.begin(), found.end(), [&](const RecoveryItem& item) {
+        return into_u8(from_path(item.file)) == path;
+    });
+    if (it == found.end())
+        return false;
+
+    MainFrame* frame = wxGetApp().mainframe;
+    Plater* plater = wxGetApp().plater();
+    if (!frame || !plater)
+        return false;
+    if (plater->is_project_dirty() || !plater->model().objects.empty())
+        frame->new_project_tab();
+    plater = wxGetApp().plater();
+    if (!plater)
+        return false;
+
+    std::vector<RecoveryItem> items{ *it };
+    m_impl->stage_for_restore(items);
+    const wxString original = items.front().source.empty() ? wxString() : from_u8(items.front().source);
+    if (!plater->restore_autosaved_project(from_path(items.front().file), original))
+        return false;
+    if (!m_impl->adopt_file(frame->live_autosave_id(), items.front().file, items.front().source, items.front().title))
+        return false;
+    frame->select_active_project_tab();
+    frame->refresh_recent_projects();
+    return true;
 }
 
 void Autosave::start()

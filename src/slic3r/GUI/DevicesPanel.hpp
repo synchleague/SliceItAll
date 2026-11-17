@@ -109,6 +109,7 @@ public:
     void finish_module_drag();
     // Printer list label follows the live job, so a running printer is not shown as free.
     void apply_live_status(const std::string& id);
+    void sync_recent_projects();
 
 private:
     void poll_jobs();
@@ -116,7 +117,6 @@ private:
     // One solid loading frame while a visible rebuild runs, then the finished dashboard.
     void begin_visible_rebuild();
     void end_visible_rebuild();
-    void sync_recent_projects();
     void paint_device_status(const std::string& id);
     class RebuildCover {
     public:

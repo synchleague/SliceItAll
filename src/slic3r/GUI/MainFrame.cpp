@@ -2848,6 +2848,12 @@ void MainFrame::on_config_changed(DynamicPrintConfig* config) const
         m_plater->on_config_change(*config); // propagate config change events to the plater
 }
 
+void MainFrame::refresh_recent_projects()
+{
+    if (m_devices_panel)
+        m_devices_panel->sync_recent_projects();
+}
+
 void MainFrame::add_to_recent_projects(const wxString& filename)
 {
     if (wxFileExists(filename))

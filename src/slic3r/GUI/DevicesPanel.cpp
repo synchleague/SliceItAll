@@ -3,6 +3,7 @@
 ///|/ PrusaSlicer is released under the terms of the AGPLv3 or higher
 #include "DevicesPanel.hpp"
 
+#include "Autosave.hpp"
 #include "DashboardSite.hpp"
 #include "FilamentRack.hpp"
 #include "GUI_App.hpp"
@@ -3379,6 +3380,8 @@ public:
     void sync_from_config()
     {
         std::vector<wxString> paths;
+        for (const Item& recovery : recovery_items())
+            paths.push_back(recovery.path);
         if (wxGetApp().app_config) {
             for (const std::string& path : wxGetApp().app_config->get_recent_projects()) {
                 if (paths.size() >= 10)
@@ -3419,12 +3422,32 @@ public:
 private:
     struct Item {
         wxString path;
+        wxString label;
         wxImage source;
         bool exists { false };
+        bool recovery { false };
         wxPanel* tile { nullptr };
         wxStaticBitmap* thumb { nullptr };
         wxStaticText* name { nullptr };
     };
+
+    static std::vector<Item> recovery_items()
+    {
+        std::vector<Item> items;
+        for (const Autosave::Entry& entry : Autosave::instance().recoverable()) {
+            Item item;
+            item.path = from_u8(entry.path);
+            item.label = from_u8(entry.label);
+            if (item.label.empty())
+                item.label = _L("Untitled");
+            item.exists = wxFileExists(item.path);
+            item.recovery = true;
+            if (item.exists)
+                item.source = load_project_preview(item.path);
+            items.push_back(std::move(item));
+        }
+        return items;
+    }
 
     void populate()
     {
@@ -3434,6 +3457,11 @@ private:
             m_scroll->DestroyChildren();
         m_virtual_w = -1;
         m_virtual_h = -1;
+        for (Item& recovery : recovery_items()) {
+            if (m_items.size() >= 10)
+                break;
+            m_items.push_back(std::move(recovery));
+        }
         if (wxGetApp().app_config) {
             for (const std::string& path : wxGetApp().app_config->get_recent_projects()) {
                 if (m_items.size() >= 10)
@@ -3453,7 +3481,8 @@ private:
         for (Item& item : m_items) {
             auto* tile = new wxPanel(m_scroll, wxID_ANY, wxDefaultPosition, wxSize(k_project_thumb_w, m_tile_h), wxBORDER_NONE);
             tile->SetBackgroundColour(k_card);
-            tile->SetToolTip(item.path);
+            const wxString tip = item.recovery ? wxString(_L("Autosave from a project that was not closed normally. Click to restore it.")) : item.path;
+            tile->SetToolTip(tip);
             tile->SetMinSize(wxSize(k_project_thumb_w, m_tile_h));
             tile->SetMaxSize(wxSize(k_project_thumb_w, m_tile_h));
             if (item.exists)
@@ -3463,17 +3492,26 @@ private:
             item.thumb->SetBackgroundColour(k_card);
             item.thumb->SetMinSize(wxSize(k_project_thumb_w, k_project_thumb_h));
             item.thumb->SetMaxSize(wxSize(k_project_thumb_w, k_project_thumb_h));
-            item.name = new wxStaticText(tile, wxID_ANY, wxFileName(item.path).GetFullName(),
+            const wxString caption = item.recovery
+                ? format_wxstr(_L("Recover: %1%"), item.label)
+                : wxFileName(item.path).GetFullName();
+            item.name = new wxStaticText(tile, wxID_ANY, caption,
                 wxPoint(0, 8 + k_project_thumb_h), wxSize(k_project_thumb_w, m_name_h), wxALIGN_CENTER_HORIZONTAL | wxST_ELLIPSIZE_END);
             item.name->SetFont(wxGetApp().bold_font());
-            item.name->SetForegroundColour(item.exists ? *wxWHITE : wxColour(140, 140, 148));
+            item.name->SetForegroundColour(item.recovery ? wxGetApp().get_accent_clr() : (item.exists ? *wxWHITE : wxColour(140, 140, 148)));
             item.name->SetBackgroundColour(k_card);
-            item.name->SetToolTip(item.path);
+            item.name->SetToolTip(tip);
             item.name->SetMinSize(wxSize(k_project_thumb_w, m_name_h));
             item.name->SetMaxSize(wxSize(k_project_thumb_w, m_name_h));
             if (item.exists) {
                 const wxString path = item.path;
-                auto open = [path](wxMouseEvent&) {
+                const bool recovery = item.recovery;
+                auto open = [this, path, recovery](wxMouseEvent&) {
+                    if (recovery) {
+                        if (Autosave::instance().restore_one(into_u8(path)))
+                            populate();
+                        return;
+                    }
                     if (wxGetApp().mainframe)
                         wxGetApp().mainframe->open_project_tab(path);
                 };

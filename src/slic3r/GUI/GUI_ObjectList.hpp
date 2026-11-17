@@ -281,7 +281,9 @@ public:
     void                merge(bool to_multipart_object);
     void                layers_editing();
 
-    wxDataViewItem      add_layer_root_item(const wxDataViewItem obj_item);
+    // obj_idx is the model index when the caller already has it. The side list can
+    // lag behind the model, and looking the row up again then walks off the model.
+    wxDataViewItem      add_layer_root_item(const wxDataViewItem obj_item, int obj_idx = -1);
     wxDataViewItem      add_settings_item(wxDataViewItem parent_item, const DynamicPrintConfig* config);
 
     DynamicPrintConfig  get_default_layer_config(const int obj_idx);

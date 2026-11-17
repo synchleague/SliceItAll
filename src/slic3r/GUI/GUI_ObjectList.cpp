@@ -2416,11 +2416,13 @@ void ObjectList::layers_editing()
     Expand(layers_item);
 }
 
-wxDataViewItem ObjectList::add_layer_root_item(const wxDataViewItem obj_item)
+wxDataViewItem ObjectList::add_layer_root_item(const wxDataViewItem obj_item, int obj_idx)
 {
-    const int obj_idx = m_objects_model->GetIdByItem(obj_item);
-    if (obj_idx < 0 || 
-        object(obj_idx)->layer_config_ranges.empty() ||
+    if (obj_idx < 0)
+        obj_idx = m_objects_model->GetIdByItem(obj_item);
+    ModelObject* target = object(obj_idx);
+    if (target == nullptr ||
+        target->layer_config_ranges.empty() ||
         printer_technology() == ptSLA)
         return wxDataViewItem(nullptr);
 
@@ -2428,7 +2430,7 @@ wxDataViewItem ObjectList::add_layer_root_item(const wxDataViewItem obj_item)
     wxDataViewItem layers_item = m_objects_model->AddLayersRoot(obj_item);
 
     // and create Layer item(s) according to the layer_config_ranges
-    for (const auto& range : object(obj_idx)->layer_config_ranges)
+    for (const auto& range : target->layer_config_ranges)
         add_layer_item(range.first, layers_item);
 
     Expand(layers_item);
@@ -3123,8 +3125,9 @@ void ObjectList::add_object_to_list(size_t obj_idx, bool call_selection_changed)
     // add settings to the object, if it has those
     add_settings_item(item, &model_object->config.get());
 
-    // Add layers if it has
-    add_layer_root_item(item);
+    // Add layers if it has. Pass the model index; the new row is not always at that
+    // position in the side list once a previous delete skipped the list.
+    add_layer_root_item(item, int(obj_idx));
 
 #ifndef __WXOSX__ 
     if (call_selection_changed)
@@ -5069,7 +5072,7 @@ void ObjectList::toggle_printable_state()
 
 ModelObject* ObjectList::object(const int obj_idx) const
 {
-    if (obj_idx < 0)
+    if (m_objects == nullptr || obj_idx < 0 || size_t(obj_idx) >= m_objects->size())
         return nullptr;
 
     return (*m_objects)[obj_idx];

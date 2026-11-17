@@ -257,6 +257,7 @@ public:
 
     void        add_to_recent_projects(const wxString& filename);
     void        remove_from_recent_projects(const wxString& filename);
+    void        refresh_recent_projects();
     void        technology_changed();
 
     void    on_account_login(const std::string& token);

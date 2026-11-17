@@ -5,6 +5,7 @@
 #define slic3r_GUI_Autosave_hpp_
 
 #include <string>
+#include <vector>
 
 namespace Slic3r {
 namespace GUI {
@@ -17,8 +18,18 @@ class Autosave
 public:
     static Autosave& instance();
 
+    struct Entry {
+        std::string path;
+        std::string label;
+    };
+
     // Ask to restore projects left behind by a crash. True when the user restored any.
+    // Declining leaves the files in place so the dashboard can still offer them.
     bool offer_recovery();
+    // Recovery files still on disk. Empty after a normal shutdown.
+    std::vector<Entry> recoverable() const;
+    // Open one recovery file onto the platter and drop that recovery file.
+    bool restore_one(const std::string& path);
     void start();
     // Normal shutdown. Drops every recovery file so the next launch stays quiet.
     void stop();

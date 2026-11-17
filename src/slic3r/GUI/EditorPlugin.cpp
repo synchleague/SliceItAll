@@ -5,6 +5,7 @@
 
 #include "GUI.hpp"
 #include "GUI_App.hpp"
+#include "GUI_ObjectList.hpp"
 #include "GLCanvas3D.hpp"
 #include "Plater.hpp"
 #include "WebView.hpp"
@@ -958,8 +959,14 @@ private:
                     indexes.push_back(i);
             }
             std::sort(indexes.begin(), indexes.end(), std::greater<size_t>());
-            for (size_t index : indexes)
+            for (size_t index : indexes) {
+                // The model and the side list have to lose the same row. Dropping it
+                // from the model only leaves a stale list entry, and the next import
+                // then reads past the end of the model.
                 plater->delete_object_from_model(index);
+                if (ObjectList* list = wxGetApp().obj_list())
+                    list->delete_object_from_list(index);
+            }
             m_plate.object_ids.clear();
         }
         return true;
