@@ -2696,6 +2696,7 @@ LayerResult GCodeGenerator::process_layer(
         "G1 X89.365 Y255.45 E3.72454\n"
         "G1 X89.365 Y255.02 E.02305\n"
         "G1 Z0.5 F600\n"
+        "M204 S[machine_max_acceleration_extruding[0]]\n"
         "{endif}";
     const std::string before_layer = kobra_s1_layer ? std::string(kobra_s1_purge) : print.config().before_layer_gcode.value;
     if ((kobra_s1_layer || !first_layer) && !before_layer.empty() && m_writer.extruder() != nullptr) {
