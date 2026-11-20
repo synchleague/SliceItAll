@@ -170,6 +170,21 @@ static std::vector<std::pair<TreeSupportSettings, std::vector<size_t>>> group_me
 
         bool found_existing_group = false;
         TreeSupportSettings next_settings{ TreeSupportMeshGroupSettings{ print_object }, print_object.slicing_parameters() };
+        next_settings.layer_print_z = next_settings.raft_layers;
+        next_settings.layer_print_z.reserve(next_settings.raft_layers.size() + print_object.layer_count());
+        for (const Layer *layer : print_object.layers())
+            next_settings.layer_print_z.emplace_back(layer->print_z);
+        {
+            // A thicker first layer is normal. Later layers that leave the nominal height are adaptive.
+            const double nominal = print_object.slicing_parameters().layer_height;
+            const size_t first_object_layer = next_settings.raft_layers.size();
+            for (size_t i = first_object_layer; i + 1 < next_settings.layer_print_z.size(); ++ i) {
+                if (std::abs((next_settings.layer_print_z[i + 1] - next_settings.layer_print_z[i]) - nominal) > 0.001) {
+                    next_settings.variable_layer_heights = true;
+                    break;
+                }
+            }
+        }
         //FIXME for now only a single object per group is enabled.
 #if 0
         for (size_t idx = 0; idx < grouped_meshes.size(); ++ idx)
@@ -1285,7 +1300,16 @@ static void generate_initial_areas(
         if (mesh_group_settings.support_angle > EPSILON && mesh_group_settings.support_angle < 0.5 * M_PI - EPSILON) {
             //FIXME mesh_group_settings.support_angle does not apply to enforcers and also it does not apply to automatic support angle (by half the external perimeter width).
             //used by max_overhang_insert_lag, only if not min_xy_dist.
-            const auto max_overhang_speed  = coord_t(tan(mesh_group_settings.support_angle) * config.layer_height);
+            coord_t overhang_step = config.layer_height;
+            if (config.variable_layer_heights && config.layer_print_z.size() > 1) {
+                const double nominal = unscaled<double>(config.layer_height);
+                double       min_dz  = nominal;
+                for (size_t i = 1; i < config.layer_print_z.size(); ++ i)
+                    min_dz = std::min(min_dz, config.layer_print_z[i] - config.layer_print_z[i - 1]);
+                if (min_dz > EPSILON)
+                    overhang_step = scaled<coord_t>(min_dz);
+            }
+            const auto max_overhang_speed  = coord_t(tan(mesh_group_settings.support_angle) * overhang_step);
             max_overhang_insert_lag = std::max(max_overhang_insert_lag, round_up_divide(config.xy_distance, max_overhang_speed / 2));
         }
     }
@@ -2456,6 +2480,24 @@ static void create_layer_pathing(const TreeModelVolumes &volumes, const TreeSupp
                 merge_every_x_layers = 1;
             const auto ta               = std::chrono::high_resolution_clock::now();
 
+            // A thicker layer may lean further, a thinner one less, so the branch angle stays put.
+            TreeSupportSettings step_config = config;
+            if (config.variable_layer_heights && layer_idx < int(config.layer_print_z.size())) {
+                const double nominal = unscaled<double>(config.layer_height);
+                const double dz      = config.layer_print_z[layer_idx] - config.layer_print_z[layer_idx - 1];
+                if (nominal > EPSILON && dz > EPSILON) {
+                    const double scale = dz / nominal;
+                    auto scale_move = [scale](coord_t move) {
+                        // A right angle is stored as "unlimited". Leave that alone.
+                        if (move > coord_t(100000000))
+                            return move;
+                        return std::max<coord_t>(1, coord_t(std::llround(double(move) * scale)));
+                    };
+                    step_config.maximum_move_distance      = scale_move(config.maximum_move_distance);
+                    step_config.maximum_move_distance_slow = scale_move(config.maximum_move_distance_slow);
+                }
+            }
+
             // ### Increase the influence areas by the allowed movement distance
             std::vector<SupportElementMerging> influence_areas;
             influence_areas.reserve(prev_layer.size());
@@ -2466,7 +2508,7 @@ static void create_layer_pathing(const TreeModelVolumes &volumes, const TreeSupp
                 parents.emplace_back(element_idx);
                 influence_areas.push_back({ el.state, parents });
             }
-            increase_areas_one_layer(volumes, config, influence_areas, layer_idx, prev_layer, merge_this_layer, throw_on_cancel);
+            increase_areas_one_layer(volumes, step_config, influence_areas, layer_idx, prev_layer, merge_this_layer, throw_on_cancel);
 
             // Place already fully constructed elements to the output, remove them from influence_areas.
             SupportElements &this_layer = move_bounds[layer_idx - 1];
@@ -3465,8 +3507,27 @@ static void generate_support_areas(Print &print, const BuildVolume &build_volume
         m_progress_offset = counter == 0 ? 0 : TREE_PROGRESS_TOTAL * (double(counter) * m_progress_multiplier);
 #endif // SLIC3R_TREESUPPORT_PROGRESS
         PrintObject &print_object = *print.get_object(processing.second.front());
+        // Avoidance is built for the largest step. Thinner layers move less than that, so they stay inside it.
+        coord_t max_move      = config.maximum_move_distance;
+        coord_t max_move_slow = config.maximum_move_distance_slow;
+        if (config.variable_layer_heights && config.layer_print_z.size() > 1) {
+            double max_dz = 0.;
+            for (size_t i = 1; i < config.layer_print_z.size(); ++ i)
+                max_dz = std::max(max_dz, config.layer_print_z[i] - config.layer_print_z[i - 1]);
+            const double nominal = unscaled<double>(config.layer_height);
+            if (nominal > EPSILON && max_dz > nominal) {
+                const double scale = max_dz / nominal;
+                auto scale_move = [scale](coord_t move) {
+                    if (move > coord_t(100000000))
+                        return move;
+                    return coord_t(std::ceil(double(move) * scale));
+                };
+                max_move      = scale_move(max_move);
+                max_move_slow = scale_move(max_move_slow);
+            }
+        }
         // Generator for model collision, avoidance and internal guide volumes.
-        TreeModelVolumes volumes{ print_object, build_volume, config.maximum_move_distance, config.maximum_move_distance_slow, processing.second.front(),
+        TreeModelVolumes volumes{ print_object, build_volume, max_move, max_move_slow, processing.second.front(),
 #ifdef SLIC3R_TREESUPPORTS_PROGRESS
             m_progress_multiplier, m_progress_offset, 
 #endif // SLIC3R_TREESUPPORTS_PROGRESS

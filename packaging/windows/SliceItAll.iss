@@ -6,7 +6,7 @@
 #endif
 
 #define MyAppName "Slice it All"
-#define MyAppVersion "0.9.4.2"
+#define MyAppVersion "0.9.4.3"
 #define MyAppPublisher "Slice it All"
 #define MyAppURL "https://github.com/synchleague/SliceItAll"
 #define MyAppExeName "SliceItAll.exe"

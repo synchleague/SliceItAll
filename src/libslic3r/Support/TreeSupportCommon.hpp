@@ -380,6 +380,11 @@ public:
 
     // Extra raft layers below the object.
     std::vector<coordf_t> raft_layers;
+    // Top Z of every support layer: raft layers, then the object's own layers.
+    // Filled when the object's layers are not a fixed height, so branch placement
+    // follows the sliced layers instead of a constant step.
+    std::vector<coordf_t> layer_print_z;
+    bool                  variable_layer_heights{ false };
 
 public:
     bool operator==(const TreeSupportSettings& other) const
@@ -478,20 +483,37 @@ void tree_supports_show_error(std::string_view message, bool critical);
 
 inline double layer_z(const SlicingParameters &slicing_params, const TreeSupportSettings &config, const size_t layer_idx)
 {
+    if (config.variable_layer_heights && ! config.layer_print_z.empty()) {
+        if (layer_idx < config.layer_print_z.size())
+            return config.layer_print_z[layer_idx];
+        return config.layer_print_z.back() + (layer_idx - (config.layer_print_z.size() - 1)) * slicing_params.layer_height;
+    }
     return layer_idx >= config.raft_layers.size() ? 
         slicing_params.object_print_z_min + slicing_params.first_object_layer_height + (layer_idx - config.raft_layers.size()) * slicing_params.layer_height :
         config.raft_layers[layer_idx];
 }
-// Lowest collision layer
+// First layer whose top is at or above z.
 inline LayerIndex layer_idx_ceil(const SlicingParameters &slicing_params, const TreeSupportSettings &config, const double z)
 {
+    if (config.variable_layer_heights && ! config.layer_print_z.empty()) {
+        const auto it = std::lower_bound(config.layer_print_z.begin(), config.layer_print_z.end(), z - EPSILON);
+        if (it == config.layer_print_z.end())
+            return LayerIndex(config.layer_print_z.size() - 1);
+        return LayerIndex(it - config.layer_print_z.begin());
+    }
     return 
         LayerIndex(config.raft_layers.size()) +
         std::max<LayerIndex>(0, ceil((z - slicing_params.object_print_z_min - slicing_params.first_object_layer_height) / slicing_params.layer_height));
 }
-// Highest collision layer
+// Last layer whose top is at or below z.
 inline LayerIndex layer_idx_floor(const SlicingParameters &slicing_params, const TreeSupportSettings &config, const double z)
 {
+    if (config.variable_layer_heights && ! config.layer_print_z.empty()) {
+        const auto it = std::upper_bound(config.layer_print_z.begin(), config.layer_print_z.end(), z + EPSILON);
+        if (it == config.layer_print_z.begin())
+            return 0;
+        return LayerIndex(std::prev(it) - config.layer_print_z.begin());
+    }
     return 
         LayerIndex(config.raft_layers.size()) + 
         std::max<LayerIndex>(0, floor((z - slicing_params.object_print_z_min - slicing_params.first_object_layer_height) / slicing_params.layer_height));

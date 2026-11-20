@@ -850,7 +850,7 @@ static void organic_smooth_branches_avoid_collisions(
                     // Calculate collision of multiple 2D layers against a collision sphere.
                     collision_sphere.last_collision_depth = - std::numeric_limits<double>::max();
                     for (uint32_t layer_id = collision_sphere.layer_begin; layer_id != collision_sphere.layer_end; ++ layer_id) {
-                        double dz = (layer_id - collision_sphere.element.state.layer_idx) * slicing_params.layer_height;
+                        double dz = layer_z(slicing_params, config, layer_id) - layer_z(slicing_params, config, collision_sphere.element.state.layer_idx);
                         if (double r2 = sqr(collision_sphere.radius) - sqr(dz); r2 > 0) {
                             if (const LayerCollisionCache &layer_collision_cache_item = layer_collision_cache[layer_id]; ! layer_collision_cache_item.empty()) {
                                 size_t hit_idx_out;
