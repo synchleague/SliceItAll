@@ -35,6 +35,7 @@
 #include <wx/dcmemory.h>
 #include <wx/image.h>
 #include <wx/dialog.h>
+#include <wx/textctrl.h>
 #include <wx/graphics.h>
 #include <wx/wrapsizer.h>
 #include <wx/msgdlg.h>
@@ -4303,6 +4304,167 @@ void show_dashboard_share_dialog(wxWindow* parent)
     dialog.ShowModal();
 }
 
+bool parse_server_address(const wxString& raw, std::string& host, int& port)
+{
+    wxString text = raw;
+    text.Trim(true).Trim(false);
+    if (text.Lower().StartsWith("https://"))
+        text = text.Mid(8);
+    else if (text.Lower().StartsWith("http://"))
+        text = text.Mid(7);
+    const int slash = text.Find('/');
+    if (slash != wxNOT_FOUND)
+        text = text.Left(slash);
+    port = 8080;
+    const int colon = text.Find(':', true);
+    if (colon > 0) {
+        long value = 0;
+        if (text.Mid(colon + 1).ToLong(&value) && value > 0 && value <= 65535) {
+            port = static_cast<int>(value);
+            text = text.Left(colon);
+        }
+    }
+    text.Trim(true).Trim(false);
+    host = into_u8(text);
+    return !host.empty();
+}
+
+void remember_dashboard_server(const std::string& host, int port, const std::string& token, bool send)
+{
+    if (!wxGetApp().app_config)
+        return;
+    wxGetApp().app_config->set("dashboard_hub_host", host);
+    wxGetApp().app_config->set("dashboard_hub_port", std::to_string(port));
+    wxGetApp().app_config->set("dashboard_hub_token", token);
+    wxGetApp().app_config->set("dashboard_hub_send", send ? "1" : "0");
+    wxGetApp().app_config->save();
+}
+
+void show_dashboard_server_dialog(wxWindow* parent)
+{
+    wxDialog dialog(parent, wxID_ANY, _L("Dashboard server"));
+    wxGetApp().UpdateDarkUI(&dialog);
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+    auto* intro = new wxStaticText(&dialog, wxID_ANY, _L("Send this dashboard's layout to the app on your server. That app reads printers on the network itself."));
+    intro->Wrap(440);
+    sizer->Add(intro, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
+
+    const std::string saved_host = wxGetApp().app_config ? wxGetApp().app_config->get("dashboard_hub_host") : std::string();
+    const std::string saved_port = wxGetApp().app_config ? wxGetApp().app_config->get("dashboard_hub_port") : std::string();
+    const std::string saved_token = wxGetApp().app_config ? wxGetApp().app_config->get("dashboard_hub_token") : std::string();
+    const bool saved_send = wxGetApp().app_config && wxGetApp().app_config->get("dashboard_hub_send") == "1";
+    wxString address = from_u8(saved_host);
+    if (!saved_host.empty() && !saved_port.empty() && saved_port != "8080")
+        address += ":" + from_u8(saved_port);
+    else if (!saved_host.empty() && saved_port == "8080")
+        address += ":8080";
+
+    sizer->Add(new wxStaticText(&dialog, wxID_ANY, _L("Address")), 0, wxLEFT | wxRIGHT | wxTOP, 12);
+    auto* address_field = new wxTextCtrl(&dialog, wxID_ANY, address, wxDefaultPosition, wxSize(420, -1));
+    wxGetApp().UpdateDarkUI(address_field);
+    sizer->Add(address_field, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 4);
+
+    sizer->Add(new wxStaticText(&dialog, wxID_ANY, _L("Token")), 0, wxLEFT | wxRIGHT | wxTOP, 10);
+    auto* token_field = new wxTextCtrl(&dialog, wxID_ANY, from_u8(saved_token), wxDefaultPosition, wxSize(420, -1));
+    wxGetApp().UpdateDarkUI(token_field);
+    sizer->Add(token_field, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 4);
+
+    auto* send = new wxCheckBox(&dialog, wxID_ANY, _L("Keep sending the layout while Slice it All is open"));
+    send->SetValue(saved_send);
+    sizer->Add(send, 0, wxLEFT | wxRIGHT | wxTOP, 12);
+
+    std::string found_host;
+    unsigned short found_port = 0;
+    std::string found_token;
+    if (DashboardSite::instance().discovered_hub(found_host, found_port, found_token)) {
+        auto* found = new wxStaticText(&dialog, wxID_ANY, _L("Found on the network: ") + from_u8("http://" + found_host + ":" + std::to_string(found_port)));
+        found->Wrap(440);
+        sizer->Add(found, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
+        auto* use_found = new wxButton(&dialog, wxID_ANY, _L("Use the found app"));
+        wxGetApp().UpdateDarkUI(use_found, true);
+        sizer->Add(use_found, 0, wxLEFT | wxTOP, 8);
+        use_found->Bind(wxEVT_BUTTON, [address_field, token_field, found_host, found_port, found_token](wxCommandEvent&) {
+            address_field->SetValue(from_u8(found_host + ":" + std::to_string(found_port)));
+            token_field->SetValue(from_u8(found_token));
+        });
+    }
+
+    auto* note = new wxStaticText(&dialog, wxID_ANY, _L("Use the server's address on your home network. The public page address is only for opening the dashboard. On the server, set DASHBOARD_TOKEN to a word you choose and paste that word here. The container log also prints the token it is using."));
+    note->Wrap(440);
+    sizer->Add(note, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
+
+    auto* result = new wxStaticText(&dialog, wxID_ANY, wxString());
+    result->Wrap(440);
+    sizer->Add(result, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 8);
+
+    auto* buttons = new wxBoxSizer(wxHORIZONTAL);
+    auto* send_now = new wxButton(&dialog, wxID_ANY, _L("Send now"));
+    auto* save = new wxButton(&dialog, wxID_ANY, _L("Save"));
+    auto* close = new wxButton(&dialog, wxID_CANCEL, _L("Close"));
+    wxGetApp().UpdateDarkUI(send_now, true);
+    wxGetApp().UpdateDarkUI(save, true);
+    wxGetApp().UpdateDarkUI(close, true);
+    buttons->Add(send_now, 0, wxRIGHT, 8);
+    buttons->Add(save, 0, wxRIGHT, 8);
+    buttons->Add(close, 0);
+    sizer->Add(buttons, 0, wxALIGN_RIGHT | wxALL, 12);
+
+    auto read_fields = [&](std::string& host, int& port, std::string& token, wxString& problem) {
+        if (!parse_server_address(address_field->GetValue(), host, port)) {
+            problem = _L("Enter the server address.");
+            return false;
+        }
+        token = into_u8(token_field->GetValue());
+        token.erase(0, token.find_first_not_of(" \t"));
+        token.erase(token.find_last_not_of(" \t") + 1);
+        if (token.empty()) {
+            problem = _L("Enter the token from the server.");
+            return false;
+        }
+        return true;
+    };
+    save->Bind(wxEVT_BUTTON, [&](wxCommandEvent&) {
+        std::string host, token;
+        int port = 8080;
+        wxString problem;
+        if (!read_fields(host, port, token, problem)) {
+            result->SetLabel(problem);
+            dialog.Layout();
+            return;
+        }
+        remember_dashboard_server(host, port, token, send->GetValue());
+        result->SetLabel(send->GetValue()
+            ? _L("Saved. The layout is sent while Slice it All is open.")
+            : _L("Saved. Sending is off until you turn it on."));
+        dialog.Layout();
+    });
+    send_now->Bind(wxEVT_BUTTON, [&](wxCommandEvent&) {
+        std::string host, token;
+        int port = 8080;
+        wxString problem;
+        if (!read_fields(host, port, token, problem)) {
+            result->SetLabel(problem);
+            dialog.Layout();
+            return;
+        }
+        remember_dashboard_server(host, port, token, true);
+        send->SetValue(true);
+        publish_dashboard_snapshot();
+        std::string error;
+        if (!DashboardSite::instance().push_layout(error))
+            result->SetLabel(from_u8(error));
+        else
+            result->SetLabel(_L("The layout was sent."));
+        dialog.Layout();
+    });
+
+    dialog.SetSizer(sizer);
+    dialog.Fit();
+    dialog.CentreOnParent();
+    dialog.SetEscapeId(wxID_CANCEL);
+    dialog.ShowModal();
+}
+
 } // namespace
 
 DevicesPanel::DevicesPanel(wxWindow* parent)
@@ -4352,6 +4514,15 @@ DevicesPanel::DevicesPanel(wxWindow* parent)
     m_edit->SetToolTip(_L("Show the modules you can add, and let you rearrange the ones already on the dashboard."));
     wxGetApp().UpdateDarkUI(m_edit, true);
     share_row->Add(m_edit, 0, wxALIGN_TOP | wxRIGHT, 8);
+    auto* server = new wxButton(share, wxID_ANY, _L("Server") + dots);
+    server->SetToolTip(_L("Choose the server that receives this dashboard's layout."));
+    wxGetApp().UpdateDarkUI(server, true);
+    share_row->Add(server, 0, wxALIGN_TOP | wxRIGHT, 8);
+    server->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        show_dashboard_server_dialog(this);
+        update_share_status();
+        publish_dashboard_snapshot();
+    });
     m_reload = new wxButton(share, wxID_ANY, _L("Reload"));
     m_reload->SetToolTip(_L("Ask the selected printer if it is there, and refresh this page."));
     wxGetApp().UpdateDarkUI(m_reload, true);

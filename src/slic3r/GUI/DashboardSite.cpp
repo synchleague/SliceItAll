@@ -1058,13 +1058,47 @@ bool hub_is_fresh(const DashboardHub& hub)
         && std::chrono::steady_clock::now() - hub.seen <= std::chrono::seconds(8);
 }
 
+bool saved_hub(DashboardHub& hub)
+{
+    if (!wxGetApp().app_config || wxGetApp().app_config->get("dashboard_hub_send") != "1")
+        return false;
+    hub.host = wxGetApp().app_config->get("dashboard_hub_host");
+    hub.token = wxGetApp().app_config->get("dashboard_hub_token");
+    int port = 8080;
+    const std::string port_text = wxGetApp().app_config->get("dashboard_hub_port");
+    if (!port_text.empty()) {
+        try {
+            port = std::stoi(port_text);
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+    if (hub.host.empty() || hub.token.empty() || port <= 0 || port > 65535)
+        return false;
+    hub.port = static_cast<unsigned short>(port);
+    hub.seen = std::chrono::steady_clock::now();
+    return true;
+}
+
+bool active_hub(DashboardHub& hub)
+{
+    if (saved_hub(hub))
+        return true;
+    std::lock_guard<std::mutex> lock(g_hub_mutex);
+    if (!hub_is_fresh(g_hub))
+        return false;
+    hub = g_hub;
+    return true;
+}
+
 bool http_exchange(const DashboardHub& hub, const std::string& method, const std::string& target,
     const std::string& content_type, const std::string& body, std::string& response)
 {
     try {
         boost::asio::io_context io;
         boost::asio::ip::tcp::socket socket(io);
-        socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(hub.host), hub.port));
+        boost::asio::ip::tcp::resolver resolver(io);
+        boost::asio::connect(socket, resolver.resolve(hub.host, std::to_string(hub.port)));
         set_socket_timeout(socket);
         std::string request = method + " " + target + " HTTP/1.1\r\nHost: " + hub.host + "\r\n"
             "Authorization: Bearer " + hub.token + "\r\nConnection: close\r\n";
@@ -1288,22 +1322,53 @@ std::vector<std::string> DashboardSite::urls() const
 
 std::string DashboardSite::network_base_url() const
 {
+    DashboardHub hub;
+    if (!active_hub(hub))
+        return {};
+    return "http://" + hub.host + ":" + std::to_string(hub.port);
+}
+
+bool DashboardSite::discovered_hub(std::string& host, unsigned short& port, std::string& token) const
+{
     std::lock_guard<std::mutex> lock(g_hub_mutex);
     if (!hub_is_fresh(g_hub))
-        return {};
-    return "http://" + g_hub.host + ":" + std::to_string(g_hub.port);
+        return false;
+    host = g_hub.host;
+    port = g_hub.port;
+    token = g_hub.token;
+    return true;
+}
+
+bool DashboardSite::push_layout(std::string& error)
+{
+    DashboardHub hub;
+    if (!active_hub(hub)) {
+        error = into_u8(_L("Choose a server address and token first."));
+        return false;
+    }
+    std::string json;
+    {
+        std::lock_guard<std::mutex> lock(m_impl->snapshot_mutex);
+        json = m_impl->layout;
+    }
+    if (json.empty()) {
+        error = into_u8(_L("There is no layout to send yet."));
+        return false;
+    }
+    std::string response;
+    if (!http_exchange(hub, "POST", "/api/push", "application/json; charset=utf-8", json, response)) {
+        error = into_u8(_L("The server did not accept the layout. Check the address and the token."));
+        return false;
+    }
+    return true;
 }
 
 void DashboardSite::push_network()
 {
     DashboardHub hub;
     std::string json;
-    {
-        std::lock_guard<std::mutex> lock(g_hub_mutex);
-        if (!hub_is_fresh(g_hub))
-            return;
-        hub = g_hub;
-    }
+    if (!active_hub(hub))
+        return;
     {
         std::lock_guard<std::mutex> lock(m_impl->snapshot_mutex);
         json = m_impl->layout;
@@ -1392,16 +1457,18 @@ void publish_dashboard_snapshot()
             if (!network_printers.empty())
                 network_printers.push_back(',');
             const std::string link_name = entry ? entry->link : std::string();
+            const std::string model = entry ? entry->model : std::string();
             network_printers += "{\"name\":\"" + json_escape(printer.name)
                 + "\",\"brand\":\"" + json_escape(brand)
+                + "\",\"model\":\"" + json_escape(model)
                 + "\",\"host\":\"" + json_escape(host)
                 + "\",\"link\":\"" + json_escape(link_name)
                 + "\",\"camera\":" + (camera ? "true" : "false")
-                + ",\"offline\":" + (has_host ? "false" : "true");
+                + ",\"offline\":" + (has_host ? "false" : "true")
+                + ",\"materials\":" + materials_json(printer.name, resin);
             if (!has_host) {
                 network_printers += ",\"status\":\"" + std::string(status)
-                    + "\",\"job\":\"" + json_escape(job)
-                    + "\",\"materials\":" + materials_json(printer.name, resin);
+                    + "\",\"job\":\"" + json_escape(job) + "\"";
             }
             network_printers += "}";
             device_names.push_back(printer.name);
@@ -1418,52 +1485,110 @@ void publish_dashboard_snapshot()
     };
 
     std::vector<std::pair<std::string, std::string>> tiles;
+    std::string rows_json;
+    auto append_row = [&](int split, int height, const std::string& left, const std::string& right) {
+        if (left == "null" && right == "null")
+            return;
+        if (!rows_json.empty())
+            rows_json.push_back(',');
+        if (split < 20 || split > 80)
+            split = 50;
+        rows_json += "{\"split\":" + std::to_string(split) + ",\"height\":" + std::to_string(std::max(0, height))
+            + ",\"left\":" + left + ",\"right\":" + right + "}";
+    };
+    auto cell_json = [&](const std::string& cell) {
+        std::vector<std::string> parts;
+        size_t part_at = 0;
+        while (part_at <= cell.size()) {
+            const size_t tab = cell.find('\t', part_at);
+            parts.push_back(cell.substr(part_at, tab == std::string::npos ? std::string::npos : tab - part_at));
+            if (tab == std::string::npos)
+                break;
+            part_at = tab + 1;
+        }
+        size_t index = 0;
+        std::function<std::string()> emit = [&]() -> std::string {
+            if (index + 1 >= parts.size())
+                return "null";
+            const std::string id = parts[index++];
+            const std::string key = parts[index++];
+            if (key == "vertical") {
+                int stack_split = 50;
+                if (index < parts.size()) {
+                    try {
+                        stack_split = std::stoi(parts[index]);
+                    } catch (const std::exception&) {
+                        stack_split = 50;
+                    }
+                    ++index;
+                }
+                if (stack_split < 20 || stack_split > 80)
+                    stack_split = 50;
+                const std::string top = emit();
+                const std::string bottom = emit();
+                if (top == "null" && bottom == "null")
+                    return "null";
+                return "{\"stack\":true,\"split\":" + std::to_string(stack_split) + ",\"top\":" + top + ",\"bottom\":" + bottom + "}";
+            }
+            if (id.empty() || !known_device(id))
+                return "null";
+            tiles.emplace_back(id, key);
+            return "{\"device\":\"" + json_escape(id) + "\",\"module\":\"" + json_escape(key) + "\"}";
+        };
+        return parts.size() < 2 ? std::string("null") : emit();
+    };
     if (wxGetApp().app_config) {
         const std::string stored = wxGetApp().app_config->get("devices_dashboard");
-        size_t cursor = 0;
-        while (cursor < stored.size()) {
-            const size_t end = stored.find_first_of("\n;", cursor);
-            std::string line = stored.substr(cursor, end == std::string::npos ? std::string::npos : end - cursor);
-            cursor = end == std::string::npos ? stored.size() : end + 1;
-            if (!line.empty() && line.back() == '\r')
-                line.pop_back();
-            const size_t colon = line.find(':');
-            const size_t tab = line.find('\t');
-            if (colon != std::string::npos && (tab == std::string::npos || colon < tab))
-                line = line.substr(colon + 1);
-            size_t cell_cursor = 0;
-            while (cell_cursor <= line.size()) {
-                const size_t pipe = line.find('|', cell_cursor);
-                const std::string cell = line.substr(cell_cursor, pipe == std::string::npos ? std::string::npos : pipe - cell_cursor);
-                cell_cursor = pipe == std::string::npos ? line.size() + 1 : pipe + 1;
-                std::vector<std::string> parts;
-                size_t part_at = 0;
-                while (part_at <= cell.size()) {
-                    const size_t tab = cell.find('\t', part_at);
-                    parts.push_back(cell.substr(part_at, tab == std::string::npos ? std::string::npos : tab - part_at));
-                    if (tab == std::string::npos)
-                        break;
-                    part_at = tab + 1;
-                }
-                if (parts.size() < 2)
+        const size_t first_tab = stored.find('\t');
+        const size_t first_colon = stored.find(':');
+        const bool modern = first_colon != std::string::npos && (first_tab == std::string::npos || first_colon < first_tab);
+        if (!modern) {
+            std::vector<std::string> cells;
+            size_t cursor = 0;
+            while (cursor < stored.size()) {
+                const size_t end = stored.find_first_of("\n;", cursor);
+                std::string line = stored.substr(cursor, end == std::string::npos ? std::string::npos : end - cursor);
+                cursor = end == std::string::npos ? stored.size() : end + 1;
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
+                const std::string cell = cell_json(line);
+                if (cell != "null")
+                    cells.push_back(cell);
+            }
+            for (size_t i = 0; i < cells.size(); i += 2)
+                append_row(50, 0, cells[i], i + 1 < cells.size() ? cells[i + 1] : "null");
+        } else {
+            size_t cursor = 0;
+            while (cursor < stored.size()) {
+                const size_t end = stored.find(';', cursor);
+                std::string record = stored.substr(cursor, end == std::string::npos ? std::string::npos : end - cursor);
+                cursor = end == std::string::npos ? stored.size() : end + 1;
+                if (!record.empty() && record.back() == '\r')
+                    record.pop_back();
+                const size_t colon = record.find(':');
+                if (colon == std::string::npos)
                     continue;
-                size_t index = 0;
-                std::function<void()> walk = [&]() {
-                    if (index + 1 >= parts.size())
-                        return;
-                    const std::string id = parts[index++];
-                    const std::string key = parts[index++];
-                    if (key == "vertical") {
-                        if (index < parts.size())
-                            ++index;
-                        walk();
-                        walk();
-                        return;
+                int split = 50;
+                int height = 0;
+                const std::string head = record.substr(0, colon);
+                const size_t comma = head.find(',');
+                try {
+                    split = std::stoi(comma == std::string::npos ? head : head.substr(0, comma));
+                } catch (const std::exception&) {
+                    split = 50;
+                }
+                if (comma != std::string::npos) {
+                    try {
+                        height = std::stoi(head.substr(comma + 1));
+                    } catch (const std::exception&) {
+                        height = 0;
                     }
-                    if (!id.empty() && known_device(id))
-                        tiles.emplace_back(id, key);
-                };
-                walk();
+                }
+                const std::string body = record.substr(colon + 1);
+                const size_t pipe = body.find('|');
+                const std::string left = cell_json(pipe == std::string::npos ? body : body.substr(0, pipe));
+                const std::string right = pipe == std::string::npos ? std::string("null") : cell_json(body.substr(pipe + 1));
+                append_row(split, height, left, right);
             }
         }
     }
@@ -1490,7 +1615,7 @@ void publish_dashboard_snapshot()
 
     const std::string now_printing = into_u8(_L("The current job shows up here."));
     const std::string temperatures = into_u8(_L("Nozzle —\nBed —"));
-    const std::string printing_title = into_u8(_L("Now printing"));
+    const std::string printing_title = into_u8(_L("Print task"));
     const std::string temperatures_title = into_u8(_L("Temperatures"));
     const std::string camera_title = into_u8(_L("Camera"));
     const std::string material_title = into_u8(_L("Material"));
@@ -1499,8 +1624,8 @@ void publish_dashboard_snapshot()
         "\"material\":{\"title\":\"" + json_escape(material_title) + "\",\"body\":\"\"},"
         "\"temperatures\":{\"title\":\"" + json_escape(temperatures_title) + "\",\"body\":\"" + json_escape(temperatures) + "\"},"
         "\"camera\":{\"title\":\"" + json_escape(camera_title) + "\",\"body\":\"\"}";
-    std::string json = "{\"devices\":[" + devices_json + "],\"tiles\":[" + tiles_json + "],\"modules\":{" + modules + "}}";
-    std::string layout = "{\"tiles\":[" + tiles_json + "],\"printers\":[" + network_printers + "],\"modules\":{" + modules + "}}";
+    std::string json = "{\"devices\":[" + devices_json + "],\"tiles\":[" + tiles_json + "],\"rows\":[" + rows_json + "],\"modules\":{" + modules + "}}";
+    std::string layout = "{\"tiles\":[" + tiles_json + "],\"rows\":[" + rows_json + "],\"printers\":[" + network_printers + "],\"modules\":{" + modules + "}}";
     DashboardSite::instance().set_layout(std::move(layout));
     DashboardSite::instance().set_snapshot(std::move(json), std::move(links));
     DashboardSite::instance().push_network();

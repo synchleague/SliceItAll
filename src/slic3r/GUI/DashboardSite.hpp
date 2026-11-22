@@ -39,9 +39,12 @@ public:
     // Layout, printer addresses, and offline-printer details. Not live readings.
     void set_layout(std::string json);
 
-    // Address of the dashboard app found on the LAN. Empty when none is announcing.
+    // Address the layout is sent to. A saved server wins over one found on the network.
     std::string network_base_url() const;
-    // Send the latest snapshot to that app, and carry camera commands back.
+    // A server that announced itself in the last few seconds.
+    bool discovered_hub(std::string& host, unsigned short& port, std::string& token) const;
+    // Send the latest layout. error is a short sentence when this returns false.
+    bool push_layout(std::string& error);
     void push_network();
 
 private:

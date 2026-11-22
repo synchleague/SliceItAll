@@ -7,102 +7,179 @@
 <style>
 :root { color-scheme: dark; }
 body { margin: 0; font-family: "Segoe UI", sans-serif; background: #14141a; color: #ececf1; }
-header { padding: 22px 24px 6px; }
+header { padding: 18px 20px 4px; }
 h1 { margin: 0; font-size: 22px; font-weight: 650; }
 h1 span { color: #FE32AD; }
-.note { color: #9b9ba8; max-width: 44rem; line-height: 1.45; }
-main { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; padding: 12px 24px 36px; }
-article { background: #1e1e27; border: 1px solid #2c2c38; border-radius: 14px; padding: 14px 16px 16px; }
-.meta { color: #9b9ba8; font-size: 13px; margin-top: 4px; }
-.status { display: inline-block; margin-top: 8px; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #33343c; }
-.status.Ready { background: #1d4d32; }
-.status.Printing { background: #4F099F; }
-.status.Idle { background: #3d3a22; }
-.status.Offline { background: #3d2a2a; }
-.module { margin-top: 12px; }
-.module h3 { margin: 0 0 4px; font-size: 13px; color: #FE32AD; font-weight: 650; }
-.module p { margin: 0; white-space: pre-line; }
-.bays { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
-.bay-title { font-size: 12px; color: #c9c9d4; margin-bottom: 6px; }
-.dry { color: #9b9ba8; font-size: 12px; margin: 0 0 6px; }
-.spools { display: flex; flex-wrap: wrap; gap: 10px; }
-.spool { width: 68px; text-align: center; }
+#fresh { margin: 6px 0 0; color: #9b9ba8; font-size: 13px; }
+.workspace { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px 28px; }
+.printers { width: 280px; flex: none; }
+.printers h2 { margin: 8px 10px 10px; font-size: 13px; font-weight: 650; color: #9b9ba8; }
+.printer { background: #202026; border: 1px solid #36363e; border-radius: 8px; padding: 14px 16px 16px; margin: 0 6px 8px; cursor: default; }
+.printer .top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.printer .name { font-weight: 700; }
+.printer .kind { color: #9e9ea6; margin-top: 6px; font-size: 13px; }
+.printer .state { font-weight: 700; white-space: nowrap; }
+.printer .state.free { color: #50be78; }
+.printer .state.print { color: #FE32AD; }
+.printer .state.offline { color: #e8b04a; }
+.printer .state.idle, .printer .state.bad { color: #a8a8b0; }
+.canvas { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.dash-row { display: grid; gap: 12px; align-items: stretch; }
+.stack { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+.card { background: #30303c; border: 2px solid #565666; border-radius: 12px; padding: 14px 14px 16px; min-width: 0; box-sizing: border-box; }
+.card h3 { margin: 0 0 10px; font-size: 15px; font-weight: 700; color: #fff; }
+.job-name { margin: 0; font-weight: 700; color: #fff; }
+.muted { margin: 6px 0 0; color: #a8a8b0; white-space: pre-line; }
+.track { height: 6px; margin-top: 10px; border-radius: 999px; background: #24242c; overflow: hidden; }
+.track span { display: block; height: 100%; background: #FE32AD; }
+.tabs { display: flex; gap: 16px; margin: 2px 0 10px; }
+.tabs button { border: 0; background: transparent; color: #c9c9d4; font: inherit; padding: 0 0 6px; cursor: pointer; }
+.tabs button.active { color: #fff; box-shadow: inset 0 -2px 0 #FE32AD; }
+.bays { min-height: 92px; }
+.spools { display: flex; flex-wrap: wrap; gap: 14px; }
+.spool { width: 64px; text-align: center; }
 .reel { height: 52px; display: flex; align-items: center; justify-content: center; }
-.flange { width: 14px; height: 46px; border-radius: 8px; background: #babac0; }
-.core { width: 30px; height: 32px; border-radius: 4px; margin: 0 -5px; z-index: 1; box-shadow: inset 0 0 0 6px rgba(16, 16, 20, 0.28); }
+.flange { width: 12px; height: 46px; border-radius: 8px; background: #c8c8ce; }
+.core { width: 28px; height: 30px; border-radius: 4px; margin: 0 -4px; z-index: 1; box-shadow: inset 0 0 0 6px rgba(16, 16, 20, 0.28); }
 .spool-name { font-size: 12px; margin-top: 4px; word-break: break-word; }
 .spool-name.empty { color: #8d8d98; }
-.badge { width: 22px; height: 22px; margin: 4px auto 0; border-radius: 50%; background: #303038; font-size: 11px; line-height: 22px; }
-.cam { position: relative; min-height: 160px; margin-top: 6px; border-radius: 10px; background: #101014; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-.cam img { width: 100%; height: auto; max-height: 280px; object-fit: contain; background: #101014; display: block; }
-.cam-note { position: absolute; left: 12px; right: 12px; margin: 0; text-align: center; color: #c9c9d4; font-size: 13px; }
-.cam-play { position: absolute; left: 8px; bottom: 8px; border: 0; border-radius: 999px; padding: 6px 12px; background: #FE32AD; color: white; font: inherit; cursor: pointer; }
-.cam-play:disabled { background: #3a3a44; color: #9b9ba8; cursor: default; }
+.badge { width: 22px; height: 22px; margin: 4px auto 0; border-radius: 50%; background: #24242c; font-size: 11px; line-height: 22px; }
+.cam { position: relative; min-height: 320px; height: 100%; border-radius: 8px; background: #101014; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.cam img { width: 100%; height: 100%; max-height: 640px; object-fit: contain; background: #101014; display: block; }
+.cam-note { position: absolute; left: 56px; right: 56px; margin: 0; text-align: center; color: #c9c9d4; font-size: 13px; }
+.cam-btn { position: absolute; width: 36px; height: 36px; border: 0; border-radius: 10px; background: rgba(32, 32, 38, 0.92); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.cam-btn:disabled { color: #6d6d76; cursor: default; }
+.cam-play { left: 10px; bottom: 10px; }
+.cam-full { right: 10px; bottom: 10px; }
+.cam-light { right: 10px; top: 10px; }
+.cam-light.lit, .cam-btn.lit { color: #FE32AD; background: #3a2433; }
+.readings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.reading { background: #26262e; border-radius: 8px; padding: 8px 10px; }
+.reading .label { color: #a8a8b0; font-size: 12px; }
+.reading .value { margin-top: 4px; font-weight: 700; }
+.reading .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.empty { color: #9b9ba8; margin: 12px; }
+@media (max-width: 860px) {
+  .workspace { flex-direction: column; }
+  .printers { width: 100%; }
+}
 </style>
 </head>
 <body>
 <header>
   <h1>Slice <span>it All</span></h1>
-  <p class="note">This dashboard is served by the dashboard app. Slice it All sends the layout. This app reads printers on the network itself. Printers with no network connection are filled in from Slice it All.</p>
-  <p id="fresh" class="note"></p>
+  <p id="fresh"></p>
 </header>
-<main id="board"></main>
+<div class="workspace">
+  <aside class="printers" id="printers"></aside>
+  <div class="canvas" id="board"></div>
+</div>
 <script>
-const known = ["Ready", "Printing", "Idle", "Offline"];
+const titles = {
+  now_printing: "Print task",
+  material: "Material",
+  camera: "Camera",
+  temperatures: "Control",
+  recent: "Recent projects"
+};
 function node(tag, className, text) {
   const el = document.createElement(tag);
   if (className) el.className = className;
   if (text) el.textContent = text;
   return el;
 }
-function findChild(parent, key) {
-  for (const child of parent.children) {
-    if (child.dataset && child.dataset.module === key)
-      return child;
-  }
-  return null;
+function icon(path) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "18");
+  svg.setAttribute("height", "18");
+  svg.setAttribute("fill", "currentColor");
+  const shape = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  shape.setAttribute("d", path);
+  svg.append(shape);
+  return svg;
+}
+function statusView(device) {
+  const status = (device && device.status) || "Offline";
+  if (status === "Ready" || status === "Connected") return { text: "Free", kind: "free" };
+  if (status === "Printing") return { text: "Printing", kind: "print" };
+  if (status === "Idle") return { text: "Not checked", kind: "idle" };
+  if (status === "Failed") return { text: "Could not connect", kind: "bad" };
+  return { text: "Offline", kind: "offline" };
+}
+function spanMinutes(minutes) {
+  if (minutes == null || minutes < 0) return "—";
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours <= 0) return rest + "m";
+  return hours + "h " + rest + "m";
+}
+function finishClock(remain) {
+  if (remain == null || remain < 0) return "—";
+  return new Date(Date.now() + remain * 60000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+function jobName(name) {
+  const text = name || "Print in progress";
+  return text.toLowerCase().endsWith(".gcode") ? text.slice(0, -6) : text;
 }
 function spoolView(slot) {
   const spool = node("div", "spool");
   const reel = node("div", "reel");
   reel.append(node("span", "flange"));
   const core = node("span", "core");
-  if (slot.color)
-    core.style.background = slot.color;
-  else
-    core.style.background = slot.filled ? "#d6d6da" : "#3a3a42";
+  core.style.background = slot.color || (slot.filled ? "#d6d6da" : "#3a3a42");
   reel.append(core);
   reel.append(node("span", "flange"));
   spool.append(reel);
-  const name = slot.material || (slot.filled ? "" : "/");
-  spool.append(node("div", "spool-name" + (slot.filled ? "" : " empty"), name || "/"));
+  spool.append(node("div", "spool-name" + (slot.filled ? "" : " empty"), slot.material || "/"));
   if (slot.badge)
     spool.append(node("div", "badge", slot.badge));
   return spool;
 }
-function fillMaterials(block, device) {
+function fillMaterials(host, device) {
+  host.replaceChildren();
   const info = device && device.materials;
-  if (!info)
+  if (!info) {
+    host.append(node("p", "muted", "No material is saved for this printer."));
     return;
+  }
   if (info.kind === "resin") {
-    block.append(node("p", "", info.name || "Choose a resin in the material list."));
-    block.append(node("p", "dry", "One resin sits in the vat. This printer has no filament spools."));
+    host.append(node("p", "job-name", info.name || "Choose a resin in the material list."));
+    host.append(node("p", "muted", "One resin sits in the vat. This printer has no filament spools."));
     return;
   }
-  const bays = node("div", "bays");
-  for (const bay of info.bays || []) {
-    const group = node("div", "bay");
-    if (bay.title)
-      group.append(node("div", "bay-title", bay.title));
-    if (bay.drying)
-      group.append(node("p", "dry", bay.drying));
-    const row = node("div", "spools");
-    for (const slot of bay.slots || [])
-      row.append(spoolView(slot));
-    group.append(row);
-    bays.append(group);
+  const bays = info.bays || [];
+  if (!bays.length) {
+    host.append(node("p", "muted", "No material is saved for this printer."));
+    return;
   }
-  block.append(bays);
+  const tabs = node("div", "tabs");
+  const pages = node("div", "bays");
+  let selected = bays.findIndex(bay => (bay.title || "").toLowerCase() === "ace1");
+  if (selected < 0) selected = 0;
+  const show = (index) => {
+    pages.replaceChildren();
+    const bay = bays[index];
+    if (bay && bay.drying)
+      pages.append(node("p", "muted", bay.drying));
+    const row = node("div", "spools");
+    for (const slot of (bay && bay.slots) || [])
+      row.append(spoolView(slot));
+    pages.append(row);
+    for (const button of tabs.children)
+      button.classList.toggle("active", Number(button.dataset.index) === index);
+  };
+  bays.forEach((bay, index) => {
+    const button = node("button", index === selected ? "active" : "", bay.title || "Bay");
+    button.type = "button";
+    button.dataset.index = String(index);
+    button.addEventListener("click", () => show(index));
+    tabs.append(button);
+  });
+  if (bays.length > 1)
+    host.append(tabs);
+  host.append(pages);
+  show(selected);
 }
 function pullFrame(block) {
   const img = block.querySelector("img");
@@ -133,10 +210,12 @@ function pullFrame(block) {
     })
     .catch(() => {
       if (note && block.dataset.on === "1")
-        note.textContent = "Waiting for Slice it All.";
+        note.textContent = "Waiting for the printer.";
     });
 }
 function stopPlayer(block) {
+  if (!block)
+    return;
   if (block._timer) {
     clearInterval(block._timer);
     block._timer = 0;
@@ -150,7 +229,7 @@ function stopPlayer(block) {
   }
 }
 function toggleCamera(block) {
-  const button = block.querySelector("button");
+  const button = block.querySelector(".cam-play");
   const note = block.querySelector(".cam-note");
   const start = block.dataset.on !== "1";
   if (button)
@@ -168,8 +247,12 @@ function toggleCamera(block) {
         return;
       }
       block.dataset.on = data.running ? "1" : "0";
+      if (typeof data.light === "boolean")
+        setLit(block, data.light);
       if (button) {
-        button.textContent = data.running ? "Stop" : "Play";
+        button.replaceChildren(icon(data.running
+          ? "M7 6h4v12H7zm6 0h4v12h-4z"
+          : "M8 5v14l11-7z"));
         button.disabled = false;
       }
       if (data.running) {
@@ -182,173 +265,301 @@ function toggleCamera(block) {
       } else {
         stopPlayer(block);
         if (note)
-          note.textContent = "Camera is stopped. Press Play to ask this printer for a picture.";
+          note.textContent = "Camera is stopped. Press Start to ask this printer for a picture.";
       }
     })
     .catch(() => {
       if (note)
-        note.textContent = "Waiting for Slice it All.";
+        note.textContent = "Waiting for the printer.";
       if (button)
         button.disabled = false;
     });
 }
-function fillCamera(block, device) {
-  if (block.dataset.ready === "1")
+function setLit(stage, on) {
+  if (!stage)
     return;
-  block.dataset.ready = "1";
-  block.dataset.camera = (device && device.name) || "";
+  stage.dataset.lit = on ? "1" : "0";
+  const light = stage.querySelector(".cam-light");
+  if (light)
+    light.classList.toggle("lit", !!on);
+}
+function switchLight(name, on, button, note) {
+  if (button)
+    button.disabled = true;
+  return fetch("/api/light?device=" + encodeURIComponent(name) + "&on=" + (on ? "1" : "0"), { cache: "no-store" })
+    .then(async (response) => {
+      const data = await response.json();
+      if (button)
+        button.disabled = false;
+      if (!data.ok && note)
+        note.textContent = data.note || "The chamber light did not switch.";
+      return data;
+    })
+    .catch(() => {
+      if (button)
+        button.disabled = false;
+      if (note)
+        note.textContent = "The chamber light did not switch.";
+      return { ok: false };
+    });
+}
+function cameraBody(device) {
   const stage = node("div", "cam");
   const img = document.createElement("img");
   img.alt = "";
   img.hidden = true;
   const note = node("p", "cam-note", "");
-  const button = node("button", "cam-play", "Play");
-  button.type = "button";
+  const play = node("button", "cam-btn cam-play");
+  play.type = "button";
+  play.append(icon("M8 5v14l11-7z"));
+  const light = node("button", "cam-btn cam-light");
+  light.type = "button";
+  light.title = "Switch the chamber light on this printer.";
+  light.append(icon("M9 21h6v-1H9v1zm3-19a7 7 0 0 0-4 12c.6.6 1 1.4 1 2h6c0-.6.4-1.4 1-2a7 7 0 0 0-4-12z"));
+  const full = node("button", "cam-btn cam-full");
+  full.type = "button";
+  full.title = "Full screen";
+  full.append(icon("M4 9V4h5v2H6v3H4zm11-5h5v5h-2V6h-3V4zM4 15h2v3h3v2H4v-5zm14 3v-3h2v5h-5v-2h3z"));
   const linked = !!(device && device.camera);
   if (!linked) {
-    button.disabled = true;
+    play.disabled = true;
+    light.disabled = true;
     note.textContent = device && device.host
       ? "This connection does not provide a camera picture."
       : "No camera. A network connection is required before a picture can appear.";
   } else {
-    note.textContent = "Camera is stopped. Press Play to ask this printer for a picture.";
+    note.textContent = "Camera is stopped. Press Start to ask this printer for a picture.";
+    play.addEventListener("click", () => toggleCamera(stage));
+    light.addEventListener("click", () => {
+      const next = stage.dataset.lit !== "1";
+      switchLight(stage.dataset.camera, next, light, note).then((data) => {
+        if (data && data.ok)
+          setLit(stage, !!data.on);
+      });
+    });
   }
-  button.addEventListener("click", () => toggleCamera(block));
-  stage.append(img, note, button);
-  block.append(stage);
+  full.addEventListener("click", () => {
+    if (stage.requestFullscreen)
+      stage.requestFullscreen();
+  });
+  stage.dataset.camera = (device && device.name) || "";
+  stage.append(img, note, play, light, full);
+  return stage;
 }
-function moduleBlock(card, modules, key, device) {
-  const info = (modules && modules[key]) || { title: key, body: "" };
-  let block = findChild(card, key);
-  if (!block) {
-    block = node("div", "module");
-    block.dataset.module = key;
-    card.append(block);
+function printTask(device) {
+  const wrap = node("div");
+  const task = device && device.task;
+  const printing = !!(task && task.printing);
+  let headline = "No job is running";
+  if (printing)
+    headline = jobName(task.name);
+  else if (device && device.offline)
+    headline = "No print is being tracked";
+  else if (!task || !task.known)
+    headline = device && device.host ? "Waiting for this printer…" : "No print is being tracked";
+  wrap.append(node("p", "job-name", headline));
+  if (printing && task.progress >= 0) {
+    const track = node("div", "track");
+    const bar = document.createElement("span");
+    bar.style.width = Math.max(0, Math.min(100, task.progress)) + "%";
+    track.append(bar);
+    wrap.append(track);
   }
-  let title = block.querySelector("h3");
-  const heading = (key === "material" && device && device.materials && device.materials.kind === "resin")
-    ? "Resin"
-    : (info.title || key);
-  if (!title) {
-    title = node("h3", "", heading);
-    block.prepend(title);
-  } else {
-    title.textContent = heading;
-  }
+  const layers = printing && task.layers > 0
+    ? "Layers  " + task.layer + " / " + task.layers
+    : (printing && task.layer > 0 ? "Layers  " + task.layer : "Layers  —");
+  const elapsed = printing ? task.elapsed : -1;
+  const remain = printing ? task.remain : -1;
+  const total = elapsed >= 0 && remain >= 0 ? elapsed + remain : -1;
+  wrap.append(node("p", "muted", layers));
+  wrap.append(node("p", "muted", "Time  " + spanMinutes(printing ? elapsed : -1) + " / " + spanMinutes(total)));
+  wrap.append(node("p", "muted", "Finishes  " + (printing ? finishClock(remain) : "—")));
+  if (device && device.offline && !printing)
+    wrap.append(node("p", "muted", "No network connection. Export a file and choose Track it to show the estimate here."));
+  else if (device && device.job && !printing && device.status === "Offline")
+    wrap.append(node("p", "muted", device.job));
+  else if (printing)
+    wrap.append(node("p", "muted", "This printer is printing, so it cannot be chosen for another print."));
+  return wrap;
+}
+function moduleCard(device, key, kept) {
+  const title = titles[key] || key;
+  const card = node("article", "card");
+  card.append(node("h3", "", ((device && device.name) || "Printer") + " - " + title));
   if (key === "camera") {
-    fillCamera(block, device);
-    return;
-  }
-  for (const child of [...block.children]) {
-    if (child !== title)
-      child.remove();
+    const previous = kept.get((device && device.name) + "\0camera");
+    card.append(previous || cameraBody(device));
+    return card;
   }
   if (key === "material") {
-    fillMaterials(block, device);
+    const host = node("div");
+    fillMaterials(host, device);
+    card.append(host);
+    return card;
+  }
+  if (key === "now_printing") {
+    card.append(printTask(device));
+    return card;
+  }
+  if (key === "temperatures") {
+    const readings = (device && device.readings) || {};
+    const grid = node("div", "readings");
+    const cells = [
+      ["Nozzle", readings.nozzle || "—"],
+      ["Bed", readings.bed || "—"],
+      ["Chamber", readings.chamber || "—"],
+      ["Model fan", readings.model_fan || "—"],
+      ["Aux fan", readings.aux_fan || "—"]
+    ];
+    for (const pair of cells) {
+      const cell = node("div", "reading");
+      cell.append(node("div", "label", pair[0]));
+      cell.append(node("div", "value", pair[1]));
+      grid.append(cell);
+    }
+    const lightCell = node("div", "reading");
+    lightCell.append(node("div", "label", "Light"));
+    const row = node("div", "row");
+    row.append(node("div", "value", readings.light || (device && device.light ? "On" : "Off")));
+    if (device && device.camera) {
+      const button = node("button", "cam-btn" + (device.light ? " lit" : ""));
+      button.type = "button";
+      button.title = "Switch the chamber light on this printer.";
+      button.append(icon("M9 21h6v-1H9v1zm3-19a7 7 0 0 0-4 12c.6.6 1 1.4 1 2h6c0-.6.4-1.4 1-2a7 7 0 0 0-4-12z"));
+      button.style.position = "static";
+      button.addEventListener("click", () => {
+        const next = !device.light;
+        switchLight(device.name, next, button, null).then((data) => {
+          if (data && data.ok)
+            button.classList.toggle("lit", !!data.on);
+        });
+      });
+      row.append(button);
+    }
+    lightCell.append(row);
+    grid.append(lightCell);
+    card.append(grid);
+    return card;
+  }
+  card.append(node("p", "muted", "This module is shown in Slice it All."));
+  return card;
+}
+function renderNode(item, byName, kept) {
+  if (!item)
+    return null;
+  if (item.stack) {
+    const box = node("div", "stack");
+    const top = renderNode(item.top, byName, kept);
+    const bottom = renderNode(item.bottom, byName, kept);
+    if (top) {
+      top.style.flex = String(item.split || 50) + " 1 0";
+      box.append(top);
+    }
+    if (bottom) {
+      bottom.style.flex = String(100 - (item.split || 50)) + " 1 0";
+      box.append(bottom);
+    }
+    return box.childElementCount ? box : null;
+  }
+  if (!item.device || !item.module)
+    return null;
+  const device = byName.get(item.device) || { name: item.device, status: "Offline" };
+  return moduleCard(device, item.module, kept);
+}
+function fallbackRows(tiles) {
+  const rows = [];
+  let pending = null;
+  for (const tile of tiles || []) {
+    const item = { device: tile.device, module: tile.module };
+    if (!pending) {
+      pending = item;
+      continue;
+    }
+    rows.push({ split: 50, height: 0, left: pending, right: item });
+    pending = null;
+  }
+  if (pending)
+    rows.push({ split: 50, height: 0, left: pending, right: null });
+  return rows;
+}
+function renderPrinters(devices) {
+  const aside = document.getElementById("printers");
+  aside.replaceChildren(node("h2", "", "Printers"));
+  if (!devices.length) {
+    aside.append(node("p", "empty", "No printers yet."));
     return;
   }
-  const body = (key === "now_printing" && device && device.job) ? device.job
-    : (key === "temperatures" && device && device.temperatures) ? device.temperatures
-    : (info.body || "");
-  if (body)
-    block.append(node("p", "", body));
+  for (const device of devices) {
+    const card = node("div", "printer");
+    const top = node("div", "top");
+    top.append(node("div", "name", device.name || "Printer"));
+    const state = statusView(device);
+    top.append(node("div", "state " + state.kind, state.text));
+    card.append(top);
+    card.append(node("div", "kind", device.model || device.brand || (device.offline ? "Offline printer" : "Printer")));
+    aside.append(card);
+  }
 }
 async function load() {
   const fresh = document.getElementById("fresh");
+  const board = document.getElementById("board");
   let data;
   try {
     const response = await fetch("/api/dashboard", { cache: "no-store" });
     data = await response.json();
     fresh.textContent = "Updated just now.";
   } catch (err) {
-    fresh.textContent = "Waiting for Slice it All.";
+    fresh.textContent = "The dashboard could not be loaded.";
     return;
   }
-  const board = document.getElementById("board");
   const devices = data.devices || [];
-  const tiles = data.tiles || [];
+  renderPrinters(devices);
   const byName = new Map(devices.map(device => [device.name, device]));
-  if (!tiles.length) {
-    for (const card of [...board.children]) {
-      if (card._timer)
-        clearInterval(card._timer);
-      for (const block of card.querySelectorAll ? card.querySelectorAll("[data-module]") : [])
-        stopPlayer(block);
-    }
-    board.replaceChildren(node("p", "note", "No devices yet. Add printers in the configuration wizard and they show up here."));
+  const rows = (data.rows && data.rows.length) ? data.rows : fallbackRows(data.tiles || []);
+  const kept = new Map();
+  for (const block of board.querySelectorAll(".cam"))
+    kept.set((block.dataset.camera || "") + "\0camera", block);
+  if (!rows.length) {
+    for (const block of kept.values())
+      stopPlayer(block);
+    board.replaceChildren(node("p", "empty", "No modules on the dashboard yet. Arrange them in Slice it All, then send the layout."));
     return;
   }
-  const wanted = new Set();
-  const modulesFor = new Map();
-  for (const tile of tiles) {
-    wanted.add(tile.device);
-    if (!modulesFor.has(tile.device))
-      modulesFor.set(tile.device, []);
-    modulesFor.get(tile.device).push(tile.module);
+  const next = document.createDocumentFragment();
+  const used = new Set();
+  for (const row of rows) {
+    const line = node("div", "dash-row");
+    const left = renderNode(row.left, byName, kept);
+    const right = renderNode(row.right, byName, kept);
+    const split = row.split || 50;
+    if (left && right)
+      line.style.gridTemplateColumns = split + "fr " + (100 - split) + "fr";
+    else
+      line.style.gridTemplateColumns = "1fr";
+    if (row.height)
+      line.style.minHeight = row.height + "px";
+    if (left) {
+      const cam = left.querySelector && left.querySelector(".cam");
+      if (cam) used.add(cam);
+      line.append(left);
+    }
+    if (right) {
+      const cam = right.querySelector && right.querySelector(".cam");
+      if (cam) used.add(cam);
+      line.append(right);
+    }
+    if (line.childElementCount)
+      next.append(line);
   }
-  for (const card of [...board.children]) {
-    const name = card.dataset ? card.dataset.device : "";
-    if (!name || !wanted.has(name)) {
-      for (const block of card.querySelectorAll ? card.querySelectorAll("[data-module]") : [])
-        stopPlayer(block);
-      card.remove();
-    }
+  for (const block of kept.values()) {
+    if (!used.has(block))
+      stopPlayer(block);
   }
-  for (const name of wanted) {
-    const device = byName.get(name) || { name: name, brand: "", status: "Offline", host: "" };
-    let card = null;
-    for (const child of board.children) {
-      if (child.dataset && child.dataset.device === name)
-        card = child;
-    }
-    if (!card) {
-      card = node("article");
-      card.dataset.device = name;
-      board.append(card);
-    }
-    let heading = card.querySelector("h2");
-    if (!heading) {
-      heading = node("h2", "", device.name || "Printer");
-      card.prepend(heading);
-    } else {
-      heading.textContent = device.name || "Printer";
-    }
-    const bits = [];
-    if (device.brand) bits.push(device.brand);
-    if (device.host) bits.push(device.host);
-    let meta = null;
-    for (const child of card.children) {
-      if (child.classList && child.classList.contains("meta"))
-        meta = child;
-    }
-    if (bits.length) {
-      if (!meta) {
-        meta = node("div", "meta", bits.join("  ·  "));
-        heading.after(meta);
-      } else {
-        meta.textContent = bits.join("  ·  ");
-      }
-    } else if (meta) {
-      meta.remove();
-    }
-    let badge = card.querySelector(".status");
-    const status = device.status || "Offline";
-    if (!badge) {
-      badge = node("div", "status", status);
-      const anchor = meta || heading;
-      anchor.after(badge);
-    }
-    badge.className = "status" + (known.includes(status) ? " " + status : "");
-    badge.textContent = status;
-    const keys = modulesFor.get(name) || [];
-    for (const key of keys)
-      moduleBlock(card, data.modules, key, device);
-    for (const block of [...card.querySelectorAll("[data-module]")]) {
-      if (!keys.includes(block.dataset.module)) {
-        stopPlayer(block);
-        block.remove();
-      }
-    }
+  board.replaceChildren(next);
+  for (const stage of board.querySelectorAll(".cam")) {
+    const device = byName.get(stage.dataset.camera);
+    if (device && typeof device.light === "boolean")
+      setLit(stage, device.light);
   }
 }
 load();

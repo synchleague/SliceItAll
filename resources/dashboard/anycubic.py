@@ -261,6 +261,84 @@ def first_int(nodes, key):
     return None
 
 
+def color_hex(color):
+    if isinstance(color, str):
+        text = color[1:] if color.startswith("#") else color
+        if len(text) >= 6:
+            try:
+                int(text[:6], 16)
+            except ValueError:
+                return ""
+            return "#" + text[:6].lower()
+        return ""
+    if isinstance(color, list) and color and isinstance(color[0], list):
+        return color_hex(color[0])
+    if isinstance(color, list) and len(color) >= 3 and all(isinstance(item, (int, float)) for item in color[:3]):
+        return "#{:02x}{:02x}{:02x}".format(int(color[0]), int(color[1]), int(color[2]))
+    return ""
+
+
+def read_ace(nodes):
+    slots = []
+    for node in nodes:
+        boxes = node.get("multi_color_box")
+        if not isinstance(boxes, list):
+            continue
+        for box in boxes:
+            if not isinstance(box, dict):
+                continue
+            box_id = box.get("id")
+            if not isinstance(box_id, int) or box_id < 0:
+                continue
+            if box.get("status") == 0:
+                continue
+            for slot in box.get("slots") or []:
+                if not isinstance(slot, dict):
+                    continue
+                index = slot.get("index")
+                if not isinstance(index, int):
+                    index = 0
+                material = slot.get("type") or slot.get("material") or ""
+                if not isinstance(material, str):
+                    material = ""
+                color = color_hex(slot.get("color")) or color_hex(slot.get("colors"))
+                edit_status = slot.get("edit_status", 1)
+                empty = edit_status == 2 and not color and not material
+                if empty and not color and not material:
+                    slots.append({"box": box_id, "index": index, "material": "", "color": "", "empty": True})
+                    continue
+                if not color and not material:
+                    continue
+                slots.append({
+                    "box": box_id,
+                    "index": index,
+                    "material": material,
+                    "color": color,
+                    "empty": False,
+                })
+    for box_id in {slot["box"] for slot in slots}:
+        group = [slot for slot in slots if slot["box"] == box_id]
+        if any(slot["index"] == 0 for slot in group):
+            continue
+        for slot in group:
+            if slot["index"] > 0:
+                slot["index"] -= 1
+    return slots
+
+
+def read_light(nodes):
+    found = None
+    for node in nodes:
+        lights = node.get("lights")
+        if isinstance(lights, list):
+            for item in lights:
+                if isinstance(item, dict) and item.get("type") == 2 and isinstance(item.get("status"), int):
+                    found = item["status"] != 0
+        if node.get("type") == 2 and isinstance(node.get("status"), int) and "brightness" in node:
+            found = node["status"] != 0
+    return found
+
+
 def read_printer(host):
     session = open_session(host)
     messages = publish_queries(session, [
@@ -279,10 +357,14 @@ def read_printer(host):
             continue
     nozzle = first_int(nodes, "curr_nozzle_temp")
     bed = first_int(nodes, "curr_hotbed_temp")
-    temps = []
-    temps.append("Nozzle {0}".format("{0}°C".format(nozzle) if nozzle is not None else "—"))
-    temps.append("Bed {0}".format("{0}°C".format(bed) if bed is not None else "—"))
+    chamber = first_int(nodes, "curr_chamber_temp")
+    model_fan = first_int(nodes, "fan_speed_pct")
+    aux_fan = first_int(nodes, "aux_fan_speed_pct")
     progress = first_int(nodes, "progress")
+    layer = first_int(nodes, "curr_layer")
+    layers = first_int(nodes, "total_layers")
+    remain = first_int(nodes, "remain_time")
+    elapsed = first_int(nodes, "print_time")
     filename = ""
     printing = False
     for node in nodes:
@@ -295,68 +377,62 @@ def read_printer(host):
             printing = True
     if progress is not None and 0 < progress < 100:
         printing = True
-    job = filename
-    if progress is not None and filename:
-        job = "{0}\n{1}%".format(filename, progress)
-    slots = []
-    for node in nodes:
-        boxes = node.get("multi_color_box")
-        if not isinstance(boxes, list):
-            continue
-        for box in boxes:
-            if not isinstance(box, dict):
-                continue
-            for slot in box.get("slots") or []:
-                if not isinstance(slot, dict):
-                    continue
-                color = slot.get("color") or []
-                hex_color = ""
-                if isinstance(color, list) and len(color) >= 3:
-                    hex_color = "#{:02x}{:02x}{:02x}".format(int(color[0]), int(color[1]), int(color[2]))
-                material = slot.get("type") or slot.get("material") or ""
-                slots.append({
-                    "material": material,
-                    "color": hex_color,
-                    "badge": str(len(slots) + 1),
-                    "filled": bool(material or hex_color),
-                })
-    materials = {"kind": "spools", "bays": [{"title": "ACE", "drying": "", "slots": slots}]} if slots else None
-    if nozzle is None and bed is None and not filename:
-        raise RuntimeError("The printer did not report its temperatures.")
+    def degree(value):
+        return "{0}°C".format(value) if value is not None else "—"
+
+    def percent(value):
+        return "{0}%".format(value) if value is not None else "—"
+
+    light = read_light(nodes)
+    if nozzle is None and bed is None and chamber is None and not filename and not nodes:
+        raise RuntimeError("The printer did not report its status.")
     return {
         "status": "Printing" if printing else "Ready",
-        "job": job,
-        "temperatures": "\n".join(temps),
-        "materials": materials,
+        "job": filename,
+        "light": light,
+        "ace": read_ace(nodes),
+        "readings": {
+            "nozzle": degree(nozzle),
+            "bed": degree(bed),
+            "chamber": degree(chamber),
+            "model_fan": percent(model_fan),
+            "aux_fan": percent(aux_fan),
+            "light": "On" if light else "Off" if light is not None else "—",
+        },
+        "task": {
+            "known": True,
+            "printing": printing,
+            "name": filename,
+            "progress": progress if progress is not None else -1,
+            "layer": layer if layer is not None else -1,
+            "layers": layers if layers is not None else -1,
+            "remain": remain if remain is not None else -1,
+            "elapsed": elapsed if elapsed is not None else -1,
+        },
     }
 
 
-def camera_command(host, start):
+def publish_control(host, messages):
     session = open_session(host)
-    action = "startCapture" if start else "stopCapture"
     broker = Broker(session)
     try:
         broker.send(mqtt_connect("sia" + token_hex(4), session["username"], session["password"]))
-        broker.packet()
-        message = json.dumps({
-            "type": "video",
-            "action": action,
-            "timestamp": int(time.time() * 1000),
-            "msgid": "{0}-{1}-{2}-{3}-{4}".format(token_hex(4), token_hex(2), token_hex(2), token_hex(2), token_hex(6)),
-            "data": {},
-        }, separators=(",", ":"))
-        broker.send(mqtt_publish(topic(session, "video"), message))
-        if start:
-            light = json.dumps({
-                "type": "light",
-                "action": "control",
-                "timestamp": int(time.time() * 1000),
-                "msgid": "{0}-{1}-{2}-{3}-{4}".format(token_hex(4), token_hex(2), token_hex(2), token_hex(2), token_hex(6)),
-                "data": {"type": 2, "status": 1, "brightness": 100},
-            }, separators=(",", ":"))
-            broker.send(mqtt_publish(topic(session, "light"), light))
+        header, body = broker.packet()
+        if header != 0x20 or len(body) < 2 or body[-1] != 0:
+            raise RuntimeError("The printer did not accept the command.")
+        for kind, action, data in messages:
+            broker.send(mqtt_publish(topic(session, kind), control_message(kind, action, data)))
     finally:
         broker.close()
+
+
+def camera_command(host, start):
+    publish_control(host, [("video", "startCapture" if start else "stopCapture", "{}")])
+
+
+def set_light(host, on):
+    data = json.dumps({"type": 2, "status": 1 if on else 0, "brightness": 100 if on else 0}, separators=(",", ":"))
+    publish_control(host, [("light", "control", data)])
 
 
 def camera_jpeg(host):

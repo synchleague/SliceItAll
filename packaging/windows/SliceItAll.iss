@@ -6,7 +6,7 @@
 #endif
 
 #define MyAppName "Slice it All"
-#define MyAppVersion "0.9.5"
+#define MyAppVersion "0.9.5.100"
 #define MyAppPublisher "Slice it All"
 #define MyAppURL "https://github.com/synchleague/SliceItAll"
 #define MyAppExeName "SliceItAll.exe"
@@ -39,7 +39,7 @@ PrivilegesRequired=admin
 DisableProgramGroupPage=yes
 CloseApplications=yes
 RestartApplications=no
-VersionInfoVersion={#MyAppVersion}.0
+VersionInfoVersion={#MyAppVersion}
 VersionInfoProductName={#MyAppName}
 VersionInfoDescription={#MyAppName} {#MyAppVersion} setup
 MinVersion=10.0
