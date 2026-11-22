@@ -148,6 +148,11 @@ public:
     // Is there any valid extrusion assigned to this LayerRegion?
     bool    has_extrusions() const { return ! this->perimeters().empty() || ! this->fills().empty(); }
 
+    // Non-planar top skin. Paths are printed with this layer and follow the mesh in Z.
+    void    append_nonplanar_fills(ExtrusionPaths &&paths);
+    // Drop top solid infill that the non-planar skin replaces.
+    void    clip_top_solid_infill(const ExPolygons &cut);
+
 protected:
     friend class Layer;
     friend class PrintObject;

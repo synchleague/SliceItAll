@@ -162,6 +162,8 @@ public:
 		auto res = (boost::format("%1%.%2%.%3%") % ver.major % ver.minor % ver.patch).str();
 		if (ver.revision > 0)
 			res += (boost::format(".%1%") % ver.revision).str();
+		if (ver.build > 0)
+			res += (boost::format(".%1%") % ver.build).str();
 		if (ver.prerelease != nullptr) { res += '-'; res += ver.prerelease; }
 		if (ver.metadata != nullptr)   { res += '+'; res += ver.metadata; }
 		return res;

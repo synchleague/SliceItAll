@@ -2726,6 +2726,38 @@ void Plater::priv::regenerate_thumbnails(SimpleEvent&) {
     glsafe(glPixelStorei(GL_UNPACK_ALIGNMENT, curr_unpack_alignment));
 }
 
+// Objects the user can see on one plate. Counted before slicing merges them.
+static std::string nonplanar_multiple_objects_error(const Model &model, const DynamicPrintConfig &config, int bed)
+{
+    bool enabled = config.has("nonplanar_slicing") && config.opt_bool("nonplanar_slicing");
+    const auto &bed_of = s_multiple_beds.get_inst_map();
+    const int beds = s_multiple_beds.get_number_of_beds();
+    size_t copies = 0;
+    for (const ModelObject *object : model.objects) {
+        if (object == nullptr || !object->printable)
+            continue;
+        if (!enabled && object->config.has("nonplanar_slicing") && object->config.get().opt_bool("nonplanar_slicing"))
+            enabled = true;
+        for (const ModelInstance *instance : object->instances) {
+            if (instance == nullptr || !instance->printable)
+                continue;
+            if (instance->print_volume_state == ModelInstancePVS_Fully_Outside)
+                continue;
+            const auto it = bed_of.find(instance->id());
+            if (it != bed_of.end()) {
+                if (it->second != bed)
+                    continue;
+            } else if (beds > 1)
+                continue;
+            ++copies;
+        }
+    }
+    if (enabled && copies > 1)
+        return _u8L("Only a single object may be printed at a time with non-planar slicing. "
+                    "Remove the other objects from this build plate.");
+    return {};
+}
+
 // Update background processing thread from the current config and Model.
 // Returns a bitmask of UpdateBackgroundProcessReturnState.
 unsigned int Plater::priv::update_background_process(bool force_validation, bool postpone_error_messages)
@@ -2781,6 +2813,19 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
     // Update the "out of print bed" state of ModelInstances.
     update_print_volume_state();
 
+    // Count plate objects before apply merges a bed into one model.
+    std::vector<std::string> nonplanar_plate_errors;
+    if (printer_technology == ptFFF) {
+        nonplanar_plate_errors.resize(s_multiple_beds.get_number_of_beds());
+        for (int bed = 0; bed < (int)nonplanar_plate_errors.size(); ++bed)
+            nonplanar_plate_errors[bed] = nonplanar_multiple_objects_error(model, full_config, bed);
+    }
+    const std::string active_nonplanar_error =
+        (s_multiple_beds.get_active_bed() >= 0
+         && s_multiple_beds.get_active_bed() < (int)nonplanar_plate_errors.size())
+            ? nonplanar_plate_errors[s_multiple_beds.get_active_bed()]
+            : std::string{};
+
     Print::ApplyStatus invalidated{Print::ApplyStatus::APPLY_STATUS_INVALIDATED};
     bool was_running = background_process.running();
     using MultipleBedsUtils::with_single_bed_model_fff;
@@ -2829,6 +2874,8 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
             const std::unique_ptr<Print> &print{q->p->fff_prints[bed_index]};
             using MultipleBedsUtils::with_single_bed_model_fff;
             const bool slice_as_one = full_config.has("slice_bed_as_one_object") && full_config.opt_bool("slice_bed_as_one_object");
+            if (bed_index < nonplanar_plate_errors.size() && !nonplanar_plate_errors[bed_index].empty())
+                s_print_statuses[bed_index] = PrintStatus::invalid;
             with_single_bed_model_fff(model, bed_index, [&](){
                 std::vector<std::string> warnings;
                 std::string err{print->validate(&warnings)};
@@ -2884,7 +2931,7 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
 		// The delayed error message is no more valid.
 		delayed_error_message.clear();
 		// The state of the Print changed, and it is non-zero. Let's validate it and give the user feedback on errors.
-        std::string err = background_process.validate(&warnings);
+        std::string err = active_nonplanar_error.empty() ? background_process.validate(&warnings) : active_nonplanar_error;
         if (err.empty()) {
 			notification_manager->set_all_slicing_errors_gray(true);
             notification_manager->close_notification_of_type(NotificationType::ValidateError);
@@ -2908,11 +2955,16 @@ unsigned int Plater::priv::update_background_process(bool force_validation, bool
         }
     }
     else {
-        if (invalidated == Print::APPLY_STATUS_UNCHANGED && !background_process.empty()) {
+        if (!active_nonplanar_error.empty() && !background_process.empty()) {
+            notification_manager->push_validate_error_notification(active_nonplanar_error);
+            return_state |= UPDATE_BACKGROUND_PROCESS_INVALID;
+        } else if (invalidated == Print::APPLY_STATUS_UNCHANGED && !background_process.empty()) {
             std::vector<std::string> warnings;
             std::string err = background_process.validate(&warnings);
-            if (!err.empty())
-                return return_state;
+            if (!err.empty()) {
+                notification_manager->push_validate_error_notification(err);
+                return_state |= UPDATE_BACKGROUND_PROCESS_INVALID;
+            }
         }
 
         if (! this->delayed_error_message.empty())

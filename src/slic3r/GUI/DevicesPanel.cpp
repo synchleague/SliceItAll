@@ -4276,7 +4276,10 @@ void show_dashboard_share_dialog(wxWindow* parent)
     auto* hint = new wxStaticText(&dialog, wxID_ANY, _L("Click an address to show it."));
     sizer->Add(hint, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 10);
 
-    const std::vector<std::string> urls = DashboardSite::instance().urls();
+    std::vector<std::string> urls = DashboardSite::instance().urls();
+    const std::string hub = DashboardSite::instance().network_base_url();
+    if (!hub.empty())
+        urls.insert(urls.begin(), hub);
     if (urls.empty()) {
         sizer->Add(new wxStaticText(&dialog, wxID_ANY, _L("The dashboard site is not running.")), 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
     } else {
@@ -4284,7 +4287,9 @@ void show_dashboard_share_dialog(wxWindow* parent)
             sizer->Add(new MaskedUrl(&dialog, from_u8(url)), 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 8);
     }
 
-    auto* note = new wxStaticText(&dialog, wxID_ANY, _L("This page stays on your home network. From outside the house, connect a VPN to this network first. If Windows asks, allow Slice it All on private networks."));
+    auto* note = new wxStaticText(&dialog, wxID_ANY, hub.empty()
+        ? _L("This page stays on your home network. From outside the house, connect a VPN to this network first. If Windows asks, allow Slice it All on private networks.")
+        : _L("Slice it All found the dashboard app on your network and is sending the layout there. That app reads printers on the network itself. Printers with no network connection are filled in from this computer. Open the first address. A Cloudflare tunnel on that server can publish the same page."));
     note->Wrap(440);
     sizer->Add(note, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 12);
 
@@ -4309,7 +4314,12 @@ DevicesPanel::DevicesPanel(wxWindow* parent)
     wxGetApp().UpdateDarkUI(this);
 
     m_share_timer.SetOwner(this);
-    Bind(wxEVT_TIMER, [this](wxTimerEvent&) { publish_dashboard_snapshot(); }, m_share_timer.GetId());
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
+        publish_dashboard_snapshot();
+        if (DashboardSite::instance().running() || !DashboardSite::instance().network_base_url().empty())
+            update_share_status();
+    }, m_share_timer.GetId());
+    m_share_timer.Start(2000);
     m_job_timer.SetOwner(this);
     Bind(wxEVT_TIMER, [this](wxTimerEvent&) { poll_jobs(); }, m_job_timer.GetId());
 
@@ -4907,11 +4917,19 @@ void DevicesPanel::rebuild_lists()
 
 void DevicesPanel::update_share_status()
 {
+    const std::string hub = DashboardSite::instance().network_base_url();
+    const bool local = DashboardSite::instance().running();
     if (m_share_info)
-        m_share_info->Show(DashboardSite::instance().running());
+        m_share_info->Show(local || !hub.empty());
     if (m_share_status) {
-        m_share_status->SetLabel(wxString());
-        m_share_status->Hide();
+        if (!hub.empty()) {
+            m_share_status->Show();
+            m_share_status->SetLabel(_L("Sending the dashboard layout to the app at ") + from_u8(hub));
+            m_share_status->Wrap(640);
+        } else if (!local) {
+            m_share_status->SetLabel(wxString());
+            m_share_status->Hide();
+        }
     }
     Layout();
 }
@@ -4924,13 +4942,7 @@ void DevicesPanel::apply_dashboard_site()
 
     if (!enabled) {
         DashboardSite::instance().stop();
-        if (m_share_timer.IsRunning())
-            m_share_timer.Stop();
-        if (m_share_info)
-            m_share_info->Hide();
-        if (m_share_status)
-            m_share_status->Hide();
-        Layout();
+        update_share_status();
         return;
     }
 

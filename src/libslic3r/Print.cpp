@@ -39,6 +39,7 @@
 #include "format.hpp"
 #include "ArrangeHelper.hpp"
 #include "CustomParametersHandling.hpp"
+#include "PlateInstanceCount.hpp"
 #include "Feature/FullSpectrum/VirtualExtruder.hpp"
 
 #include <float.h>
@@ -88,6 +89,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "bed_shape",
         "bed_temperature",
         "before_layer_gcode",
+        "flush_line",
         "between_objects_gcode",
         "binary_gcode",
         "bridge_acceleration",
@@ -497,6 +499,24 @@ std::string Print::validate(std::vector<std::string>* warnings) const
         assert(m_objects.size() == 1);
         if (m_objects.front()->all_regions().size() > 1)
             return _u8L("The Spiral Vase option can only be used when printing single material objects.");
+    }
+
+    {
+        // The print preset and any object override both count. Sequential printing
+        // still leaves the other objects on the plate, so it is not an exception.
+        bool nonplanar = m_default_object_config.nonplanar_slicing.value;
+        for (const PrintObject *object : m_objects)
+            if (object->config().nonplanar_slicing.value)
+                nonplanar = true;
+        if (nonplanar) {
+            size_t total_copies_count = print_plate_instances(this);
+            if (total_copies_count == 0)
+                for (const PrintObject *object : m_objects)
+                    total_copies_count += object->instances().size();
+            if (total_copies_count > 1)
+                return _u8L("Only a single object may be printed at a time with non-planar slicing. "
+                         "Remove the other objects from this build plate.");
+        }
     }
 
     if (m_config.machine_limits_usage == MachineLimitsUsage::EmitToGCode && m_config.gcode_flavor == gcfKlipper)

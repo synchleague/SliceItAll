@@ -983,5 +983,120 @@ void LayerRegion::export_region_fill_surfaces_to_svg_debug(const char *name) con
     this->export_region_fill_surfaces_to_svg(debug_out_path("LayerRegion-fill_surfaces-%s-%d.svg", name, idx ++).c_str());
 }
 
+namespace {
+
+bool is_replaced_top(const ExtrusionPath &path)
+{
+    if (path.attributes().nonplanar)
+        return false;
+    const ExtrusionRole role = path.role();
+    // Only the flat top skin. The walls stay, so the sloped shell has something to sit on.
+    return role.is_solid_infill() && role.is_external() && !role.is_bridge();
+}
+
+void take_clipped_path(ExtrusionEntitiesPtr &kept, const ExtrusionPath &path, const ExPolygons &cut)
+{
+    if (!is_replaced_top(path)) {
+        kept.push_back(new ExtrusionPath(path));
+        return;
+    }
+    ExtrusionEntityCollection clipped;
+    path.subtract_expolygons(cut, &clipped);
+    for (ExtrusionEntity *piece : clipped.entities)
+        kept.push_back(piece);
+    clipped.entities.clear();
+}
+
+// Rewrite children of one fill collection. The collection itself stays put so island
+// index ranges into LayerRegion::fills() remain valid.
+void clip_top_solid_entities(ExtrusionEntitiesPtr &entities, const ExPolygons &cut)
+{
+    ExtrusionEntitiesPtr kept;
+    kept.reserve(entities.size());
+    for (ExtrusionEntity *entity : entities) {
+        if (auto *collection = dynamic_cast<ExtrusionEntityCollection *>(entity)) {
+            clip_top_solid_entities(collection->entities, cut);
+            kept.push_back(collection);
+            continue;
+        }
+        if (auto *multi = dynamic_cast<ExtrusionMultiPath *>(entity)) {
+            bool touched = false;
+            for (const ExtrusionPath &path : multi->paths)
+                if (is_replaced_top(path)) {
+                    touched = true;
+                    break;
+                }
+            if (!touched) {
+                kept.push_back(multi);
+                continue;
+            }
+            for (const ExtrusionPath &path : multi->paths)
+                take_clipped_path(kept, path, cut);
+            delete multi;
+            continue;
+        }
+        if (auto *loop = dynamic_cast<ExtrusionLoop *>(entity)) {
+            bool touched = false;
+            for (const ExtrusionPath &path : loop->paths)
+                if (is_replaced_top(path)) {
+                    touched = true;
+                    break;
+                }
+            if (!touched) {
+                kept.push_back(loop);
+                continue;
+            }
+            for (const ExtrusionPath &path : loop->paths)
+                take_clipped_path(kept, path, cut);
+            delete loop;
+            continue;
+        }
+        if (auto *path = dynamic_cast<ExtrusionPath *>(entity)) {
+            if (!is_replaced_top(*path)) {
+                kept.push_back(path);
+                continue;
+            }
+            take_clipped_path(kept, *path, cut);
+            delete path;
+            continue;
+        }
+        kept.push_back(entity);
+    }
+    entities.swap(kept);
+}
+
+} // namespace
+
+void LayerRegion::append_nonplanar_fills(ExtrusionPaths &&paths)
+{
+    if (paths.empty() || m_layer == nullptr)
+        return;
+    const Point anchor = paths.front().first_point();
+    const uint32_t fill_begin = uint32_t(m_fills.entities.size());
+    auto *collection = new ExtrusionEntityCollection();
+    collection->append(std::move(paths));
+    m_fills.entities.push_back(collection);
+
+    int region_idx = -1;
+    for (int i = 0; i < int(m_layer->region_count()); ++i) {
+        if (m_layer->get_region(i) == this) {
+            region_idx = i;
+            break;
+        }
+    }
+    if (region_idx >= 0)
+        m_layer->register_nonplanar_fill(uint32_t(region_idx), fill_begin, uint32_t(m_fills.entities.size()), anchor);
+}
+
+void LayerRegion::clip_top_solid_infill(const ExPolygons &cut)
+{
+    if (cut.empty())
+        return;
+    // Top-level entries are the collections island ranges point at. Clip inside them.
+    for (ExtrusionEntity *entity : m_fills.entities)
+        if (auto *collection = dynamic_cast<ExtrusionEntityCollection *>(entity))
+            clip_top_solid_entities(collection->entities, cut);
+}
+
 }
  

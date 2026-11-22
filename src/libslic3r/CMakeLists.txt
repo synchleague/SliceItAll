@@ -331,6 +331,8 @@ set(SLIC3R_SOURCES
     PrintConfig.cpp
     PrintConfig.hpp
     PrintObject.cpp
+    Nonplanar.cpp
+    Nonplanar.hpp
     PrintObjectSlice.cpp
     PrintRegion.cpp
     PointGrid.hpp

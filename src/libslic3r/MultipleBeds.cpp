@@ -2,10 +2,12 @@
 
 #include "BuildVolume.hpp"
 #include "Model.hpp"
+#include "PlateInstanceCount.hpp"
 #include "Print.hpp"
 
 #include <cassert>
 #include <algorithm>
+#include <unordered_map>
 
 namespace Slic3r {
 
@@ -342,6 +344,18 @@ void with_single_bed_model_fff(Model &model, const int bed_index, const std::fun
     s_multiple_beds.move_from_bed_to_first_bed(model, bed_index);
     s_multiple_beds.remove_instances_outside_outside_bed(model, bed_index);
     s_multiple_beds.set_active_bed(bed_index);
+    {
+        // Count before a merged view replaces every model on the plate with one object.
+        size_t copies = 0;
+        for (const ModelObject *object : model.objects) {
+            if (object == nullptr || !object->printable)
+                continue;
+            for (const ModelInstance *instance : object->instances)
+                if (instance != nullptr && instance->printable)
+                    ++copies;
+        }
+        note_bed_instances_for_apply(copies);
+    }
     if (slice_as_one_object) {
         merged_view = ModelObject::merged_for_slicing(model, bed_index);
         if (merged_view)
@@ -653,6 +667,33 @@ void MultipleBeds::autoslice_next_bed()
 }
 #endif // SLIC3R_GUI
 
+
+namespace {
+std::unordered_map<const Print *, size_t> s_print_plate_instances;
+size_t s_bed_instances_for_apply = 0;
+}
+
+void note_bed_instances_for_apply(size_t count)
+{
+    s_bed_instances_for_apply = count;
+}
+
+size_t bed_instances_for_apply()
+{
+    return s_bed_instances_for_apply;
+}
+
+void set_print_plate_instances(const Print *print, size_t count)
+{
+    if (print != nullptr)
+        s_print_plate_instances[print] = count;
+}
+
+size_t print_plate_instances(const Print *print)
+{
+    const auto it = s_print_plate_instances.find(print);
+    return it == s_print_plate_instances.end() ? 0 : it->second;
+}
 
 }
 

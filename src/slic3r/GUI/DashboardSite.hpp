@@ -36,6 +36,13 @@ public:
     };
 
     void set_snapshot(std::string json, std::vector<PrinterLink> printers = {});
+    // Layout, printer addresses, and offline-printer details. Not live readings.
+    void set_layout(std::string json);
+
+    // Address of the dashboard app found on the LAN. Empty when none is announcing.
+    std::string network_base_url() const;
+    // Send the latest snapshot to that app, and carry camera commands back.
+    void push_network();
 
 private:
     DashboardSite();

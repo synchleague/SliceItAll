@@ -3074,6 +3074,13 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<DraftShield>(dsDisabled));
 
+    def = this->add("flush_line", coBool);
+    def->label = L("Flush line");
+    def->tooltip = L("Print a priming line before the first layer. Turn this off to save filament when you are not changing filament. "
+                     "On the Kobra S1 the printer may reject a file that does not start with this line.");
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionBool(true));
+
     def = this->add("skirts", coInt);
     def->label = L("Loops (minimum)");
     def->full_label = L("Skirt Loops");
@@ -4006,6 +4013,26 @@ void PrintConfigDef::init_fff_params()
     def->max = 2;
     def->mode = comExpert;
     def->set_default_value(new ConfigOptionFloat(0));
+
+    def = this->add("nonplanar_slicing", coBool);
+    def->label = L("Non-planar slicing");
+    def->category = L("Advanced");
+    def->tooltip = L("Print gently sloped tops by following the surface with the nozzle instead of stacking flat stairs. "
+                     "The skin is laid with the layers underneath, so it stays supported. Max depth is how far the nozzle may drop beside the tip. "
+                     "Slicing is refused when more than one object is on the build plate.");
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("nonplanar_max_depth", coFloat);
+    def->label = L("Max depth");
+    def->category = L("Advanced");
+    def->tooltip = L("How far the nozzle may drop below nearby material, in millimeters. "
+                     "A larger value follows steeper slopes. Anything steeper than that stays as flat layers.");
+    def->sidetext = L("mm");
+    def->min = 0;
+    def->max = 20;
+    def->mode = comExpert;
+    def->set_default_value(new ConfigOptionFloat(2));
 
     def = this->add("z_offset", coFloat);
     def->label = L("Z offset");

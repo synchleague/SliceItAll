@@ -1896,6 +1896,9 @@ void Sidebar::build_process_panel()
         }}
     });
     add_page({
+        { L("Prime"), {
+            { "flush_line", L("Flush line"), comExpert }
+        }},
         { L("Bed adhesion"), {
             { "brim_type", L("Brim type") },
             { "brim_width", L("Brim width") },
@@ -1910,6 +1913,10 @@ void Sidebar::build_process_panel()
             { "fuzzy_skin", L("Fuzzy skin") },
             { "fuzzy_skin_thickness", L("Fuzzy skin thickness"), comAdvanced },
             { "fuzzy_skin_point_dist", L("Fuzzy skin point distance"), comAdvanced }
+        }},
+        { L("Non-planar"), {
+            { "nonplanar_slicing", L("Non-planar slicing"), comExpert },
+            { "nonplanar_max_depth", L("Max depth"), comExpert }
         }},
         { L("Special mode"), {
             { "complete_objects", L("Complete individual objects"), comExpert }

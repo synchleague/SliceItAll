@@ -23,10 +23,15 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
+#include <array>
+#include <chrono>
 #include <condition_variable>
+#include <cctype>
 #include <exception>
 #include <functional>
 #include <map>
+#include <sstream>
 #include <vector>
 #include <cstdio>
 #include <mutex>
@@ -783,6 +788,7 @@ struct DashboardSite::Impl
     std::mutex cameras_mutex;
     std::condition_variable clients_done;
     std::string json = "{\"devices\":[],\"tiles\":[],\"modules\":{}}";
+    std::string layout = "{\"tiles\":[],\"printers\":[],\"modules\":{}}";
     std::map<std::string, DashboardSite::PrinterLink> printers;
     std::map<std::string, std::shared_ptr<LiveCamera>> cameras;
     boost::asio::io_context io;
@@ -1017,6 +1023,156 @@ void DashboardSite::Impl::serve(boost::asio::ip::tcp::socket& socket)
     socket.close(error);
 }
 
+struct DashboardHub
+{
+    std::string host;
+    unsigned short port = 0;
+    std::string token;
+    std::chrono::steady_clock::time_point seen{};
+};
+
+std::mutex g_hub_mutex;
+DashboardHub g_hub;
+std::atomic<bool> g_listen{ true };
+std::atomic<bool> g_pushing{ false };
+std::thread g_listen_thread;
+
+std::string url_encode(const std::string& text)
+{
+    std::string out;
+    for (unsigned char c : text) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+            out.push_back(static_cast<char>(c));
+        else {
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "%%%02X", c);
+            out += buf;
+        }
+    }
+    return out;
+}
+
+bool hub_is_fresh(const DashboardHub& hub)
+{
+    return !hub.host.empty() && hub.port != 0 && !hub.token.empty()
+        && std::chrono::steady_clock::now() - hub.seen <= std::chrono::seconds(8);
+}
+
+bool http_exchange(const DashboardHub& hub, const std::string& method, const std::string& target,
+    const std::string& content_type, const std::string& body, std::string& response)
+{
+    try {
+        boost::asio::io_context io;
+        boost::asio::ip::tcp::socket socket(io);
+        socket.connect(boost::asio::ip::tcp::endpoint(boost::asio::ip::make_address(hub.host), hub.port));
+        set_socket_timeout(socket);
+        std::string request = method + " " + target + " HTTP/1.1\r\nHost: " + hub.host + "\r\n"
+            "Authorization: Bearer " + hub.token + "\r\nConnection: close\r\n";
+        if (!content_type.empty())
+            request += "Content-Type: " + content_type + "\r\n";
+        request += "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+        boost::asio::write(socket, boost::asio::buffer(request));
+        std::string raw;
+        char buffer[4096];
+        boost::system::error_code error;
+        while (raw.size() < 2 * 1024 * 1024) {
+            const size_t count = socket.read_some(boost::asio::buffer(buffer), error);
+            if (count > 0)
+                raw.append(buffer, count);
+            if (error)
+                break;
+        }
+        const size_t split = raw.find("\r\n\r\n");
+        response = split == std::string::npos ? std::string() : raw.substr(split + 4);
+        return raw.rfind("HTTP/1.1 200", 0) == 0 || raw.rfind("HTTP/1.0 200", 0) == 0;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void listen_for_dashboard_app()
+{
+    while (g_listen) {
+        try {
+            boost::asio::io_context io;
+            boost::asio::ip::udp::socket socket(io);
+            socket.open(boost::asio::ip::udp::v4());
+            socket.set_option(boost::asio::socket_base::reuse_address(true));
+            boost::system::error_code ec;
+            socket.bind(boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 8766), ec);
+            if (ec) {
+                std::this_thread::sleep_for(std::chrono::seconds(2));
+                continue;
+            }
+#ifdef _WIN32
+            const DWORD milliseconds = 1000;
+            ::setsockopt(socket.native_handle(), SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&milliseconds), sizeof(milliseconds));
+#else
+            struct timeval timeout;
+            timeout.tv_sec = 1;
+            timeout.tv_usec = 0;
+            ::setsockopt(socket.native_handle(), SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+#endif
+            std::array<char, 512> buffer{};
+            while (g_listen) {
+                boost::asio::ip::udp::endpoint from;
+                const size_t count = socket.receive_from(boost::asio::buffer(buffer), from, 0, ec);
+                if (ec || count == 0)
+                    continue;
+                std::istringstream lines(std::string(buffer.data(), count));
+                std::string magic, port_text, token, advertise;
+                std::getline(lines, magic);
+                std::getline(lines, port_text);
+                std::getline(lines, token);
+                std::getline(lines, advertise);
+                auto trim = [](std::string& value) {
+                    if (!value.empty() && value.back() == '\r')
+                        value.pop_back();
+                };
+                trim(magic);
+                trim(port_text);
+                trim(token);
+                trim(advertise);
+                if (magic != "sliceitall-dashboard" || token.empty())
+                    continue;
+                int port = 0;
+                try {
+                    port = std::stoi(port_text);
+                } catch (const std::exception&) {
+                    continue;
+                }
+                if (port <= 0 || port > 65535)
+                    continue;
+                std::string host = advertise.empty() ? from.address().to_string() : advertise;
+                if (host.empty() || host == "0.0.0.0")
+                    continue;
+                std::lock_guard<std::mutex> lock(g_hub_mutex);
+                g_hub.host = std::move(host);
+                g_hub.port = static_cast<unsigned short>(port);
+                g_hub.token = std::move(token);
+                g_hub.seen = std::chrono::steady_clock::now();
+            }
+        } catch (const std::exception&) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
+    }
+}
+
+void start_dashboard_listener()
+{
+    if (g_listen_thread.joinable())
+        return;
+    g_listen = true;
+    g_listen_thread = std::thread(listen_for_dashboard_app);
+}
+
+void stop_dashboard_listener()
+{
+    g_listen = false;
+    if (g_listen_thread.joinable())
+        g_listen_thread.join();
+}
+
 DashboardSite& DashboardSite::instance()
 {
     static DashboardSite site;
@@ -1026,10 +1182,12 @@ DashboardSite& DashboardSite::instance()
 DashboardSite::DashboardSite()
     : m_impl(std::make_unique<Impl>())
 {
+    start_dashboard_listener();
 }
 
 DashboardSite::~DashboardSite()
 {
+    stop_dashboard_listener();
     stop();
 }
 
@@ -1099,7 +1257,8 @@ void DashboardSite::stop()
 
     std::lock_guard<std::mutex> lock(m_impl->life);
     m_impl->acceptor.reset();
-    m_impl->stop_cameras();
+    if (network_base_url().empty())
+        m_impl->stop_cameras();
 }
 
 bool DashboardSite::running() const
@@ -1127,6 +1286,43 @@ std::vector<std::string> DashboardSite::urls() const
     return urls;
 }
 
+std::string DashboardSite::network_base_url() const
+{
+    std::lock_guard<std::mutex> lock(g_hub_mutex);
+    if (!hub_is_fresh(g_hub))
+        return {};
+    return "http://" + g_hub.host + ":" + std::to_string(g_hub.port);
+}
+
+void DashboardSite::push_network()
+{
+    DashboardHub hub;
+    std::string json;
+    {
+        std::lock_guard<std::mutex> lock(g_hub_mutex);
+        if (!hub_is_fresh(g_hub))
+            return;
+        hub = g_hub;
+    }
+    {
+        std::lock_guard<std::mutex> lock(m_impl->snapshot_mutex);
+        json = m_impl->layout;
+    }
+    if (json.empty())
+        return;
+    bool expected = false;
+    if (!g_pushing.compare_exchange_strong(expected, true))
+        return;
+
+    std::thread([hub, json] {
+        struct Clear {
+            ~Clear() { g_pushing = false; }
+        } clear;
+        std::string response;
+        http_exchange(hub, "POST", "/api/push", "application/json; charset=utf-8", json, response);
+    }).detach();
+}
+
 void DashboardSite::set_snapshot(std::string json, std::vector<PrinterLink> printers)
 {
     std::map<std::string, PrinterLink> links;
@@ -1139,10 +1335,17 @@ void DashboardSite::set_snapshot(std::string json, std::vector<PrinterLink> prin
     m_impl->printers = std::move(links);
 }
 
+void DashboardSite::set_layout(std::string json)
+{
+    std::lock_guard<std::mutex> lock(m_impl->snapshot_mutex);
+    m_impl->layout = std::move(json);
+}
+
 void publish_dashboard_snapshot()
 {
     refresh_offline_jobs(false);
     std::string devices_json;
+    std::string network_printers;
     std::vector<std::string> device_names;
     std::vector<DashboardSite::PrinterLink> links;
     const std::vector<DeviceEntry> catalog = bound_devices();
@@ -1186,6 +1389,21 @@ void publish_dashboard_snapshot()
                 + ",\"camera\":" + (camera ? "true" : "false")
                 + ",\"job\":\"" + json_escape(job)
                 + "\",\"materials\":" + materials_json(printer.name, resin) + "}";
+            if (!network_printers.empty())
+                network_printers.push_back(',');
+            const std::string link_name = entry ? entry->link : std::string();
+            network_printers += "{\"name\":\"" + json_escape(printer.name)
+                + "\",\"brand\":\"" + json_escape(brand)
+                + "\",\"host\":\"" + json_escape(host)
+                + "\",\"link\":\"" + json_escape(link_name)
+                + "\",\"camera\":" + (camera ? "true" : "false")
+                + ",\"offline\":" + (has_host ? "false" : "true");
+            if (!has_host) {
+                network_printers += ",\"status\":\"" + std::string(status)
+                    + "\",\"job\":\"" + json_escape(job)
+                    + "\",\"materials\":" + materials_json(printer.name, resin);
+            }
+            network_printers += "}";
             device_names.push_back(printer.name);
             DashboardSite::PrinterLink link;
             link.name = printer.name;
@@ -1277,12 +1495,15 @@ void publish_dashboard_snapshot()
     const std::string camera_title = into_u8(_L("Camera"));
     const std::string material_title = into_u8(_L("Material"));
 
-    std::string json = "{\"devices\":[" + devices_json + "],\"tiles\":[" + tiles_json + "],\"modules\":{"
-        "\"now_printing\":{\"title\":\"" + json_escape(printing_title) + "\",\"body\":\"" + json_escape(now_printing) + "\"},"
+    const std::string modules = std::string("\"now_printing\":{\"title\":\"") + json_escape(printing_title) + "\",\"body\":\"" + json_escape(now_printing) + "\"},"
         "\"material\":{\"title\":\"" + json_escape(material_title) + "\",\"body\":\"\"},"
         "\"temperatures\":{\"title\":\"" + json_escape(temperatures_title) + "\",\"body\":\"" + json_escape(temperatures) + "\"},"
-        "\"camera\":{\"title\":\"" + json_escape(camera_title) + "\",\"body\":\"\"}}}";
+        "\"camera\":{\"title\":\"" + json_escape(camera_title) + "\",\"body\":\"\"}";
+    std::string json = "{\"devices\":[" + devices_json + "],\"tiles\":[" + tiles_json + "],\"modules\":{" + modules + "}}";
+    std::string layout = "{\"tiles\":[" + tiles_json + "],\"printers\":[" + network_printers + "],\"modules\":{" + modules + "}}";
+    DashboardSite::instance().set_layout(std::move(layout));
     DashboardSite::instance().set_snapshot(std::move(json), std::move(links));
+    DashboardSite::instance().push_network();
 }
 
 }}

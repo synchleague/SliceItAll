@@ -228,6 +228,9 @@ public:
                                                                            FillAdaptive::Octree *support_fill_octree,
                                                                            FillLightning::Generator* lightning_generator) const;
     void 					make_ironing();
+    // Register a fill collection that was just appended to a region, including one whose
+    // path sits outside this layer's slice (a non-planar skin dipping onto a lower layer).
+    void                    register_nonplanar_fill(uint32_t region_idx, uint32_t fill_begin, uint32_t fill_end, const Point &point);
 
     void                    export_region_slices_to_svg(const char *path) const;
     void                    export_region_fill_surfaces_to_svg(const char *path) const;

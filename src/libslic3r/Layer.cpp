@@ -1181,6 +1181,61 @@ BoundingBox get_extents(const LayerRegion &layer_region)
     return bbox;
 }
 
+void Layer::register_nonplanar_fill(uint32_t region_idx, uint32_t fill_begin, uint32_t fill_end, const Point &point)
+{
+    if (fill_begin >= fill_end || lslices_ex.empty() || lslices.empty())
+        return;
+
+    int chosen = 0;
+    double best = std::numeric_limits<double>::max();
+    bool contained = false;
+    const int slice_count = std::min(int(lslices_ex.size()), int(lslices.size()));
+    for (int i = slice_count - 1; i >= 0; --i) {
+        const BoundingBox &bbox = lslices_ex[i].bbox;
+        const bool inside = point.x() >= bbox.min.x() && point.x() < bbox.max.x()
+            && point.y() >= bbox.min.y() && point.y() < bbox.max.y()
+            && lslices[i].contour.contains(point);
+        if (inside) {
+            chosen = i;
+            contained = true;
+            break;
+        }
+        if (!lslices[i].contour.empty()) {
+            const double distance2 = (lslices[i].contour.point_projection(point) - point).cast<double>().squaredNorm();
+            if (distance2 < best) {
+                best = distance2;
+                chosen = i;
+            }
+        }
+    }
+
+    LayerSlice &lslice = lslices_ex[chosen];
+    if (lslice.islands.empty())
+        return;
+
+    LayerIsland *island = &lslice.islands.front();
+    if (contained) {
+        for (LayerIsland &candidate : lslice.islands) {
+            const bool composite = candidate.fill_expolygons_composite();
+            const ExPolygons &expolygons = composite
+                ? get_region(int(candidate.perimeters.region()))->fill_expolygons_composite()
+                : get_region(int(candidate.fill_region_id))->fill_expolygons();
+            const BoundingBoxes &bboxes = composite
+                ? get_region(int(candidate.perimeters.region()))->fill_expolygons_composite_bboxes()
+                : get_region(int(candidate.fill_region_id))->fill_expolygons_bboxes();
+            for (uint32_t expolygon_id : candidate.fill_expolygons) {
+                if (expolygon_id < bboxes.size() && bboxes[expolygon_id].contains(point)
+                    && expolygon_id < expolygons.size() && expolygons[expolygon_id].contains(point)) {
+                    island = &candidate;
+                    goto found_island;
+                }
+            }
+        }
+    }
+found_island:
+    island->add_fill_range(LayerExtrusionRange{region_idx, ExtrusionRange{fill_begin, fill_end}});
+}
+
 BoundingBox get_extents(const LayerRegionPtrs &layer_regions)
 {
     BoundingBox bbox;

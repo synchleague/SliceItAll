@@ -18,6 +18,7 @@
 #include <cstddef>
 
 #include "Model.hpp"
+#include "PlateInstanceCount.hpp"
 #include "Print.hpp"
 #include "admesh/stl.h"
 #include "libslic3r/Config.hpp"
@@ -1165,6 +1166,8 @@ static void validate_print_config_change(const PrintConfig &old_config, const Dy
 
 Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_config, std::vector<std::string> *warnings, const DynamicPrintConfig* original_config)
 {
+    // Recorded by with_single_bed_model_fff before models on the plate are merged.
+    set_print_plate_instances(this, bed_instances_for_apply());
 #ifdef _DEBUG
     check_model_ids_validity(model);
 #endif /* _DEBUG */

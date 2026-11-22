@@ -1781,6 +1781,10 @@ void TabPrint::build()
         optgroup->append_single_option_line("automatic_infill_combination_max_layer_height");
         optgroup->append_single_option_line("infill_every_layers", category_path + "combine-infill-every-x-layers");
 
+        optgroup = page->new_optgroup(L("Non-planar"));
+        optgroup->append_single_option_line("nonplanar_slicing");
+        optgroup->append_single_option_line("nonplanar_max_depth");
+
         optgroup = page->new_optgroup(L("Advanced"));
         optgroup->append_single_option_line("solid_infill_every_layers", category_path + "solid-infill-every-x-layers");
         optgroup->append_single_option_line("fill_angle", category_path + "fill-angle");
@@ -1792,6 +1796,7 @@ void TabPrint::build()
     page = add_options_page(L("Skirt and brim"), "skirt+brim");
         category_path = "skirt-and-brim_133969#";
         optgroup = page->new_optgroup(L("Skirt"));
+        optgroup->append_single_option_line("flush_line");
         optgroup->append_single_option_line("skirts", category_path + "skirt");
         optgroup->append_single_option_line("skirt_distance", category_path + "skirt");
         optgroup->append_single_option_line("skirt_height", category_path + "skirt");

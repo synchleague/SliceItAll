@@ -40,6 +40,7 @@
 #include "PrintConfig.hpp"
 #include "ShortestPath.hpp"
 #include "Print.hpp"
+#include "Nonplanar.hpp"
 #include "Thread.hpp"
 #include "Utils.hpp"
 #include "ClipperUtils.hpp"
@@ -2698,7 +2699,15 @@ LayerResult GCodeGenerator::process_layer(
         "G1 Z0.5 F600\n"
         "M204 S[machine_max_acceleration_extruding]\n"
         "{endif}";
-    const std::string before_layer = kobra_s1_layer ? std::string(kobra_s1_purge) : print.config().before_layer_gcode.value;
+    std::string before_layer = print.config().before_layer_gcode.value;
+    if (kobra_s1_layer) {
+        // The stock profile stores this same priming line. The Flush line option is the switch for it.
+        const bool stock_purge = before_layer.find("PURGE LINE") != std::string::npos;
+        if (print.config().flush_line.value)
+            before_layer = kobra_s1_purge;
+        else if (stock_purge)
+            before_layer.clear();
+    }
     if ((kobra_s1_layer || !first_layer) && !before_layer.empty() && m_writer.extruder() != nullptr) {
         DynamicConfig config;
         config.set_key_value("layer_num",   new ConfigOptionInt(m_layer_index + 1));
@@ -3475,6 +3484,10 @@ std::string GCodeGenerator::_extrude(
     const EmitModifiers             &emit_modifiers)
 {
     std::string gcode;
+    Geometry::ArcWelder::Path nonplanar_path;
+    if (path_attr.nonplanar && m_layer != nullptr && m_layer->object() != nullptr)
+        nonplanar_path = project_nonplanar_path(path, *m_layer->object(), *m_layer, path_attr.height);
+    const Geometry::ArcWelder::Path &toolpath = nonplanar_path.empty() ? path : nonplanar_path;
     const std::string_view description_bridge = path_attr.role.is_bridge() ? " (bridge)"sv : ""sv;
 
     const bool has_active_instance{m_label_objects.has_active_instance()};
@@ -3487,15 +3500,15 @@ std::string GCodeGenerator::_extrude(
         const std::string comment{"move to print after unknown position"};
         gcode += this->retract_and_wipe();
         gcode += m_writer.multiple_extruders ? "" : m_label_objects.maybe_change_instance(m_writer);
-        gcode += this->m_writer.travel_to_xy(this->point_to_gcode(path.front().point), comment);
+        gcode += this->m_writer.travel_to_xy(this->point_to_gcode(toolpath.front().point), comment);
         gcode += this->m_writer.travel_to_z_force(z, comment);
-    } else if ( this->last_position != path.front().point) {
+    } else if ( this->last_position != toolpath.front().point) {
         std::string comment = "move to first ";
         comment += description;
         comment += description_bridge;
         comment += " point";
         const Vec3crd from{to_3d(*this->last_position, scaled(this->m_last_layer_z))};
-        const Vec3crd to{to_3d(path.front().point, scaled(this->m_last_layer_z + (path.front().height_fraction - 1.0) * path_attr.height))};
+        const Vec3crd to{to_3d(toolpath.front().point, scaled(this->m_last_layer_z + (toolpath.front().height_fraction - 1.0) * path_attr.height))};
         const std::string travel_gcode{this->travel_to(from, to, path_attr.role, comment, [this](){
             return m_writer.multiple_extruders ? "" : m_label_objects.maybe_change_instance(m_writer);
         })};
@@ -3690,10 +3703,10 @@ std::string GCodeGenerator::_extrude(
         comment = description;
         comment += description_bridge;
     }
-    Vec2d prev_exact = this->point_to_gcode(path.front().point);
+    Vec2d prev_exact = this->point_to_gcode(toolpath.front().point);
     Vec2d prev = GCodeFormatter::quantize(prev_exact);
-    auto  it   = path.begin();
-    auto  end  = path.end();
+    auto  it   = toolpath.begin();
+    auto  end  = toolpath.end();
     for (++ it; it != end; ++ it) {
         Vec2d p_exact = this->point_to_gcode(it->point);
         Vec2d p = GCodeFormatter::quantize(p_exact);
@@ -3719,7 +3732,13 @@ std::string GCodeGenerator::_extrude(
             if (radius == 0) {
                 // Extrude line segment.
                 if (const double line_length = (p - prev).norm(); line_length > 0) {
-                    double extrusion_amount{e_per_mm * line_length * it->e_fraction};
+                    double extrusion_length = line_length;
+                    if (path_attr.nonplanar) {
+                        const double z0 = this->m_last_layer_z + (std::prev(it)->height_fraction - 1.0) * m_last_height;
+                        const double z1 = this->m_last_layer_z + (it->height_fraction - 1.0) * m_last_height;
+                        extrusion_length = std::hypot(line_length, z1 - z0);
+                    }
+                    double extrusion_amount{e_per_mm * extrusion_length * it->e_fraction};
                     if (it->height_fraction < 1.0 || std::prev(it)->height_fraction < 1.0) {
                         const Vec3d destination{to_3d(p, this->m_last_layer_z + (it->height_fraction - 1) * m_last_height)};
                         gcode += m_writer.extrude_to_xyz(destination, extrusion_amount);
@@ -3753,7 +3772,7 @@ std::string GCodeGenerator::_extrude(
         gcode += ";_RESET_FAN_SPEED\n";
     }
 
-    this->last_position = path.back().point;
+    this->last_position = toolpath.back().point;
     return gcode;
 }
 

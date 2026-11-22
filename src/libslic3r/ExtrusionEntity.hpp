@@ -156,12 +156,15 @@ struct ExtrusionAttributes : ExtrusionFlow
     std::optional<OverhangAttributes> overhang_attributes;
     // Set only for external and internal perimeters. The external perimeter has value 0, the first internal perimeter has 1, and so on.
     std::optional<uint16_t> perimeter_index;
+    // Toolpath follows the mesh instead of the flat layer. Z is applied when the G-code is written.
+    bool            nonplanar{ false };
 };
 
 inline bool operator==(const ExtrusionAttributes &lhs, const ExtrusionAttributes &rhs)
 {
     return static_cast<const ExtrusionFlow&>(lhs) == static_cast<const ExtrusionFlow&>(rhs) &&
-           lhs.role == rhs.role && lhs.overhang_attributes == rhs.overhang_attributes;
+           lhs.role == rhs.role && lhs.overhang_attributes == rhs.overhang_attributes &&
+           lhs.nonplanar == rhs.nonplanar;
 }
 
 class ExtrusionPath : public ExtrusionEntity

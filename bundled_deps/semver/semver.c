@@ -182,6 +182,7 @@ semver_parse_version (const char *str, semver_t *ver) {
   // non mandatory
   ver->patch = 0;
   ver->revision = 0;
+  ver->build = 0;
 
   while (slice != NULL && index++ < 5) {
     next = strchr(slice, DELIMITER[0]);
@@ -200,6 +201,7 @@ semver_parse_version (const char *str, semver_t *ver) {
       case 2: ver->minor = value; break;
       case 3: ver->patch = value; break;
       case 4: ver->revision = value; break;
+      case 5: ver->build = value; break;
     }
 
     /* Continue with the next slice */
@@ -211,7 +213,10 @@ semver_parse_version (const char *str, semver_t *ver) {
 
   // Major and minor versions are mandatory, patch version is not mandatory.
   // A fourth numeric component is the Slice it All revision (0.9.2.1).
-  return (index >= 2 && index <= 4) ? 0 : -1;
+  // A fifth is the local build (0.9.4.3.100). Anything past that is rejected.
+  if (slice != NULL)
+    return -1;
+  return (index >= 2 && index <= 5) ? 0 : -1;
 }
 
 static int
@@ -288,7 +293,9 @@ semver_compare_version (semver_t x, semver_t y) {
   if ((res = binary_comparison(x.major, y.major)) == 0) {
     if ((res = binary_comparison(x.minor, y.minor)) == 0) {
       if ((res = binary_comparison(x.patch, y.patch)) == 0) {
-        return binary_comparison(x.revision, y.revision);
+        if ((res = binary_comparison(x.revision, y.revision)) == 0)
+          return binary_comparison(x.build, y.build);
+        return res;
       }
     }
   }

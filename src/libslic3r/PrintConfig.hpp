@@ -744,6 +744,8 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                thick_bridges))
     ((ConfigOptionFloat,               xy_size_compensation))
     ((ConfigOptionFloat,               vertical_edge_smoothing))
+    ((ConfigOptionBool,                nonplanar_slicing))
+    ((ConfigOptionFloat,               nonplanar_max_depth))
     ((ConfigOptionBool,                wipe_into_objects))
 
     ((ConfigOptionBool,                interlocking_beam))
@@ -1022,6 +1024,7 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloatOrPercent,     first_layer_speed))
     ((ConfigOptionFloatOrPercent,     first_layer_infill_speed))
     ((ConfigOptionInts,               first_layer_temperature))
+    ((ConfigOptionBool,               flush_line))
     ((ConfigOptionIntsNullable,       idle_temperature))
     ((ConfigOptionInts,               full_fan_speed_layer))
     ((ConfigOptionFloat,              infill_acceleration))

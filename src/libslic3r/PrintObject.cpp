@@ -37,6 +37,7 @@
 #include "Polygon.hpp"
 #include "Polyline.hpp"
 #include "Print.hpp"
+#include "Nonplanar.hpp"
 #include "BoundingBox.hpp"
 #include "Geometry.hpp"
 #include "I18N.hpp"
@@ -463,6 +464,7 @@ void PrintObject::infill()
         );
         m_print->throw_if_canceled();
         BOOST_LOG_TRIVIAL(debug) << "Filling layers in parallel - end";
+        apply_nonplanar_surfaces(*this);
         /*  we could free memory now, but this would make this step not idempotent
         ### $_->fill_surfaces->clear for map @{$_->regions}, @{$object->layers};
         */
@@ -487,6 +489,7 @@ void PrintObject::ironing()
         );
         m_print->throw_if_canceled();
         BOOST_LOG_TRIVIAL(debug) << "Ironing in parallel - end";
+        clip_nonplanar_overlaps(*this);
         this->set_done(posIroning);
     }
 }
@@ -855,7 +858,9 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "infill_anchor"
             || opt_key == "infill_anchor_max"
             || opt_key == "top_infill_extrusion_width"
-            || opt_key == "first_layer_extrusion_width") {
+            || opt_key == "first_layer_extrusion_width"
+            || opt_key == "nonplanar_slicing"
+            || opt_key == "nonplanar_max_depth") {
             steps.emplace_back(posInfill);
         } else if (opt_key == "fill_pattern") {
             steps.emplace_back(posPrepareInfill);
