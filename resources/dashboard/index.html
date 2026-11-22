@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Slice it All</title>
+<style>
+:root { color-scheme: dark; }
+body { margin: 0; font-family: "Segoe UI", sans-serif; background: #14141a; color: #ececf1; }
+header { padding: 22px 24px 6px; }
+h1 { margin: 0; font-size: 22px; font-weight: 650; }
+h1 span { color: #FE32AD; }
+.note { color: #9b9ba8; max-width: 44rem; line-height: 1.45; }
+main { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; padding: 12px 24px 36px; }
+article { background: #1e1e27; border: 1px solid #2c2c38; border-radius: 14px; padding: 14px 16px 16px; }
+.meta { color: #9b9ba8; font-size: 13px; margin-top: 4px; }
+.status { display: inline-block; margin-top: 8px; font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #33343c; }
+.status.Ready { background: #1d4d32; }
+.status.Printing { background: #4F099F; }
+.status.Idle { background: #3d3a22; }
+.status.Offline { background: #3d2a2a; }
+.module { margin-top: 12px; }
+.module h3 { margin: 0 0 4px; font-size: 13px; color: #FE32AD; font-weight: 650; }
+.module p { margin: 0; white-space: pre-line; }
+.bays { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.bay-title { font-size: 12px; color: #c9c9d4; margin-bottom: 6px; }
+.dry { color: #9b9ba8; font-size: 12px; margin: 0 0 6px; }
+.spools { display: flex; flex-wrap: wrap; gap: 10px; }
+.spool { width: 68px; text-align: center; }
+.reel { height: 52px; display: flex; align-items: center; justify-content: center; }
+.flange { width: 14px; height: 46px; border-radius: 8px; background: #babac0; }
+.core { width: 30px; height: 32px; border-radius: 4px; margin: 0 -5px; z-index: 1; box-shadow: inset 0 0 0 6px rgba(16, 16, 20, 0.28); }
+.spool-name { font-size: 12px; margin-top: 4px; word-break: break-word; }
+.spool-name.empty { color: #8d8d98; }
+.badge { width: 22px; height: 22px; margin: 4px auto 0; border-radius: 50%; background: #303038; font-size: 11px; line-height: 22px; }
+.cam { position: relative; min-height: 160px; margin-top: 6px; border-radius: 10px; background: #101014; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.cam img { width: 100%; height: auto; max-height: 280px; object-fit: contain; background: #101014; display: block; }
+.cam-note { position: absolute; left: 12px; right: 12px; margin: 0; text-align: center; color: #c9c9d4; font-size: 13px; }
+.cam-play { position: absolute; left: 8px; bottom: 8px; border: 0; border-radius: 999px; padding: 6px 12px; background: #FE32AD; color: white; font: inherit; cursor: pointer; }
+.cam-play:disabled { background: #3a3a44; color: #9b9ba8; cursor: default; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Slice <span>it All</span></h1>
+  <p class="note">This dashboard is served by the dashboard app. Slice it All sends the layout. This app reads printers on the network itself. Printers with no network connection are filled in from Slice it All.</p>
+  <p id="fresh" class="note"></p>
+</header>
+<main id="board"></main>
+<script>
+const known = ["Ready", "Printing", "Idle", "Offline"];
+function node(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text) el.textContent = text;
+  return el;
+}
+function findChild(parent, key) {
+  for (const child of parent.children) {
+    if (child.dataset && child.dataset.module === key)
+      return child;
+  }
+  return null;
+}
+function spoolView(slot) {
+  const spool = node("div", "spool");
+  const reel = node("div", "reel");
+  reel.append(node("span", "flange"));
+  const core = node("span", "core");
+  if (slot.color)
+    core.style.background = slot.color;
+  else
+    core.style.background = slot.filled ? "#d6d6da" : "#3a3a42";
+  reel.append(core);
+  reel.append(node("span", "flange"));
+  spool.append(reel);
+  const name = slot.material || (slot.filled ? "" : "/");
+  spool.append(node("div", "spool-name" + (slot.filled ? "" : " empty"), name || "/"));
+  if (slot.badge)
+    spool.append(node("div", "badge", slot.badge));
+  return spool;
+}
+function fillMaterials(block, device) {
+  const info = device && device.materials;
+  if (!info)
+    return;
+  if (info.kind === "resin") {
+    block.append(node("p", "", info.name || "Choose a resin in the material list."));
+    block.append(node("p", "dry", "One resin sits in the vat. This printer has no filament spools."));
+    return;
+  }
+  const bays = node("div", "bays");
+  for (const bay of info.bays || []) {
+    const group = node("div", "bay");
+    if (bay.title)
+      group.append(node("div", "bay-title", bay.title));
+    if (bay.drying)
+      group.append(node("p", "dry", bay.drying));
+    const row = node("div", "spools");
+    for (const slot of bay.slots || [])
+      row.append(spoolView(slot));
+    group.append(row);
+    bays.append(group);
+  }
+  block.append(bays);
+}
+function pullFrame(block) {
+  const img = block.querySelector("img");
+  const note = block.querySelector(".cam-note");
+  if (!img || block.dataset.on !== "1")
+    return;
+  fetch("/api/camera/frame?device=" + encodeURIComponent(block.dataset.camera), { cache: "no-store" })
+    .then(async (response) => {
+      if (block.dataset.on !== "1")
+        return;
+      if (response.status === 200) {
+        const blob = await response.blob();
+        if (!blob.size)
+          return;
+        const url = URL.createObjectURL(blob);
+        const previous = img.dataset.url;
+        img.src = url;
+        img.hidden = false;
+        img.dataset.url = url;
+        if (previous)
+          URL.revokeObjectURL(previous);
+        if (note)
+          note.textContent = "";
+        return;
+      }
+      if (note && response.status !== 204)
+        note.textContent = (await response.text()) || "The camera did not answer.";
+    })
+    .catch(() => {
+      if (note && block.dataset.on === "1")
+        note.textContent = "Waiting for Slice it All.";
+    });
+}
+function stopPlayer(block) {
+  if (block._timer) {
+    clearInterval(block._timer);
+    block._timer = 0;
+  }
+  const img = block.querySelector("img");
+  if (img && img.dataset.url) {
+    URL.revokeObjectURL(img.dataset.url);
+    img.removeAttribute("src");
+    delete img.dataset.url;
+    img.hidden = true;
+  }
+}
+function toggleCamera(block) {
+  const button = block.querySelector("button");
+  const note = block.querySelector(".cam-note");
+  const start = block.dataset.on !== "1";
+  if (button)
+    button.disabled = true;
+  if (note)
+    note.textContent = start ? "Starting the camera." : "Stopping the camera.";
+  fetch("/api/camera?device=" + encodeURIComponent(block.dataset.camera) + "&action=" + (start ? "start" : "stop"), { cache: "no-store" })
+    .then(async (response) => {
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        if (note)
+          note.textContent = (data && data.note) || "The camera did not answer.";
+        if (button)
+          button.disabled = false;
+        return;
+      }
+      block.dataset.on = data.running ? "1" : "0";
+      if (button) {
+        button.textContent = data.running ? "Stop" : "Play";
+        button.disabled = false;
+      }
+      if (data.running) {
+        if (note)
+          note.textContent = "Starting the camera. The first picture can take a few seconds.";
+        if (block._timer)
+          clearInterval(block._timer);
+        pullFrame(block);
+        block._timer = setInterval(() => pullFrame(block), 250);
+      } else {
+        stopPlayer(block);
+        if (note)
+          note.textContent = "Camera is stopped. Press Play to ask this printer for a picture.";
+      }
+    })
+    .catch(() => {
+      if (note)
+        note.textContent = "Waiting for Slice it All.";
+      if (button)
+        button.disabled = false;
+    });
+}
+function fillCamera(block, device) {
+  if (block.dataset.ready === "1")
+    return;
+  block.dataset.ready = "1";
+  block.dataset.camera = (device && device.name) || "";
+  const stage = node("div", "cam");
+  const img = document.createElement("img");
+  img.alt = "";
+  img.hidden = true;
+  const note = node("p", "cam-note", "");
+  const button = node("button", "cam-play", "Play");
+  button.type = "button";
+  const linked = !!(device && device.camera);
+  if (!linked) {
+    button.disabled = true;
+    note.textContent = device && device.host
+      ? "This connection does not provide a camera picture."
+      : "No camera. A network connection is required before a picture can appear.";
+  } else {
+    note.textContent = "Camera is stopped. Press Play to ask this printer for a picture.";
+  }
+  button.addEventListener("click", () => toggleCamera(block));
+  stage.append(img, note, button);
+  block.append(stage);
+}
+function moduleBlock(card, modules, key, device) {
+  const info = (modules && modules[key]) || { title: key, body: "" };
+  let block = findChild(card, key);
+  if (!block) {
+    block = node("div", "module");
+    block.dataset.module = key;
+    card.append(block);
+  }
+  let title = block.querySelector("h3");
+  const heading = (key === "material" && device && device.materials && device.materials.kind === "resin")
+    ? "Resin"
+    : (info.title || key);
+  if (!title) {
+    title = node("h3", "", heading);
+    block.prepend(title);
+  } else {
+    title.textContent = heading;
+  }
+  if (key === "camera") {
+    fillCamera(block, device);
+    return;
+  }
+  for (const child of [...block.children]) {
+    if (child !== title)
+      child.remove();
+  }
+  if (key === "material") {
+    fillMaterials(block, device);
+    return;
+  }
+  const body = (key === "now_printing" && device && device.job) ? device.job
+    : (key === "temperatures" && device && device.temperatures) ? device.temperatures
+    : (info.body || "");
+  if (body)
+    block.append(node("p", "", body));
+}
+async function load() {
+  const fresh = document.getElementById("fresh");
+  let data;
+  try {
+    const response = await fetch("/api/dashboard", { cache: "no-store" });
+    data = await response.json();
+    fresh.textContent = "Updated just now.";
+  } catch (err) {
+    fresh.textContent = "Waiting for Slice it All.";
+    return;
+  }
+  const board = document.getElementById("board");
+  const devices = data.devices || [];
+  const tiles = data.tiles || [];
+  const byName = new Map(devices.map(device => [device.name, device]));
+  if (!tiles.length) {
+    for (const card of [...board.children]) {
+      if (card._timer)
+        clearInterval(card._timer);
+      for (const block of card.querySelectorAll ? card.querySelectorAll("[data-module]") : [])
+        stopPlayer(block);
+    }
+    board.replaceChildren(node("p", "note", "No devices yet. Add printers in the configuration wizard and they show up here."));
+    return;
+  }
+  const wanted = new Set();
+  const modulesFor = new Map();
+  for (const tile of tiles) {
+    wanted.add(tile.device);
+    if (!modulesFor.has(tile.device))
+      modulesFor.set(tile.device, []);
+    modulesFor.get(tile.device).push(tile.module);
+  }
+  for (const card of [...board.children]) {
+    const name = card.dataset ? card.dataset.device : "";
+    if (!name || !wanted.has(name)) {
+      for (const block of card.querySelectorAll ? card.querySelectorAll("[data-module]") : [])
+        stopPlayer(block);
+      card.remove();
+    }
+  }
+  for (const name of wanted) {
+    const device = byName.get(name) || { name: name, brand: "", status: "Offline", host: "" };
+    let card = null;
+    for (const child of board.children) {
+      if (child.dataset && child.dataset.device === name)
+        card = child;
+    }
+    if (!card) {
+      card = node("article");
+      card.dataset.device = name;
+      board.append(card);
+    }
+    let heading = card.querySelector("h2");
+    if (!heading) {
+      heading = node("h2", "", device.name || "Printer");
+      card.prepend(heading);
+    } else {
+      heading.textContent = device.name || "Printer";
+    }
+    const bits = [];
+    if (device.brand) bits.push(device.brand);
+    if (device.host) bits.push(device.host);
+    let meta = null;
+    for (const child of card.children) {
+      if (child.classList && child.classList.contains("meta"))
+        meta = child;
+    }
+    if (bits.length) {
+      if (!meta) {
+        meta = node("div", "meta", bits.join("  ·  "));
+        heading.after(meta);
+      } else {
+        meta.textContent = bits.join("  ·  ");
+      }
+    } else if (meta) {
+      meta.remove();
+    }
+    let badge = card.querySelector(".status");
+    const status = device.status || "Offline";
+    if (!badge) {
+      badge = node("div", "status", status);
+      const anchor = meta || heading;
+      anchor.after(badge);
+    }
+    badge.className = "status" + (known.includes(status) ? " " + status : "");
+    badge.textContent = status;
+    const keys = modulesFor.get(name) || [];
+    for (const key of keys)
+      moduleBlock(card, data.modules, key, device);
+    for (const block of [...card.querySelectorAll("[data-module]")]) {
+      if (!keys.includes(block.dataset.module)) {
+        stopPlayer(block);
+        block.remove();
+      }
+    }
+  }
+}
+load();
+setInterval(load, 3000);
+</script>
+</body>
+</html>
